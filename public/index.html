@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>3 Agents</title>
+    <meta name="description" content="ChatGPT, Gemini, Claude에게 동시에 묻고 하나의 답으로 합의시키는 앱" />
+    <meta name="theme-color" content="#0c0c0f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- 아이콘 스프라이트: 로고와 에이전트 글리프 -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="logo" viewBox="0 0 64 64">
+        <circle cx="32" cy="23" r="17" fill="var(--c-openai)" fill-opacity=".82" />
+        <circle cx="22.5" cy="39.5" r="17" fill="var(--c-gemini)" fill-opacity=".82" />
+        <circle cx="41.5" cy="39.5" r="17" fill="var(--c-anthropic)" fill-opacity=".82" />
+        <circle cx="32" cy="34" r="5.5" fill="var(--logo-dot)" />
+      </symbol>
+      <symbol id="g-openai" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.7">
+          <ellipse cx="12" cy="12" rx="9" ry="4" />
+          <ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(60 12 12)" />
+          <ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(120 12 12)" />
+        </g>
+      </symbol>
+      <symbol id="g-gemini" viewBox="0 0 24 24">
+        <path
+          fill="currentColor"
+          d="M12 2c.8 6 4 9.2 10 10-6 .8-9.2 4-10 10-.8-6-4-9.2-10-10 6-.8 9.2-4 10-10Z"
+        />
+      </symbol>
+      <symbol id="g-anthropic" viewBox="0 0 24 24">
+        <g stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M12 3.5v17" />
+          <path d="M3.5 12h17" />
+          <path d="M6 6l12 12" />
+          <path d="M18 6 6 18" />
+        </g>
+      </symbol>
+    </svg>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="3 Agents 홈">
+        <svg class="brand-mark" aria-hidden="true"><use href="#logo" /></svg>
+        <span class="brand-name">3 Agents</span>
+      </a>
+      <div class="topbar-right">
+        <span id="mockBadge" class="badge" hidden>데모 모드</span>
+        <button id="settingsBtn" class="icon-btn" type="button" aria-label="설정" title="설정">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <h1>한 번 묻고,<br class="only-narrow" /> 셋이 답하고, <span class="grad">하나로 합의.</span></h1>
+        <p class="sub">ChatGPT · Gemini · Claude의 답을 나란히 보고, 충돌하는 지점까지 드러낸 합의 답변을 받습니다.</p>
+      </section>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <label class="sr-only" for="question">질문</label>
+        <textarea id="question" rows="3" placeholder="무엇이든 물어보세요. 배경, 제약, 원하는 답의 형태까지 적을수록 합의의 질이 올라갑니다." required></textarea>
+        <div class="composer-bar">
+          <div id="agentChips" class="chips" role="group" aria-label="질문할 AI 선택"></div>
+          <div class="composer-actions">
+            <div class="seg" role="radiogroup" aria-label="합의 방식">
+              <button type="button" role="radio" data-mode="fast" title="3개 답변 → 바로 종합 (호출 4회)">빠른 합의</button>
+              <button type="button" role="radio" data-mode="debate" title="3개 답변 → 서로 검토·수정 → 종합 (호출 7회)">토론 합의</button>
+            </div>
+            <button id="sendBtn" class="send" type="submit">
+              <span class="send-label">물어보기</span>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <div id="examples" class="examples" aria-label="질문 예시"></div>
+
+      <section id="grid" class="grid" aria-label="각 AI의 답변" hidden></section>
+
+      <section id="consensus" class="consensus" aria-live="polite" hidden>
+        <div class="consensus-head">
+          <svg class="consensus-mark" aria-hidden="true"><use href="#logo" /></svg>
+          <div>
+            <h2>합의 답변</h2>
+            <p id="consensusMeta" class="meta"></p>
+          </div>
+          <div class="head-actions">
+            <button id="retryConsensus" class="ghost" type="button" hidden>다시 합의</button>
+            <button id="copyConsensus" class="ghost" type="button">복사</button>
+          </div>
+        </div>
+        <div id="consensusBody" class="md"></div>
+        <p id="legend" class="legend"></p>
+      </section>
+    </main>
+
+    <dialog id="settings" class="settings">
+      <form method="dialog" id="settingsForm">
+        <header class="dlg-head">
+          <h2>설정</h2>
+          <button class="icon-btn" value="close" aria-label="닫기">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+        <p class="note">
+          키는 이 브라우저(localStorage)에만 저장되고 이 앱의 로컬 서버를 거쳐 각 회사 API로만 전송됩니다.
+          서버 <code>.env</code>에 키가 있으면 비워 둬도 됩니다.
+        </p>
+        <div id="providerFields"></div>
+        <label class="field">
+          <span>합의 조정 AI <small>세 답변을 종합하는 역할</small></span>
+          <select id="synthSelect"></select>
+        </label>
+        <footer class="dlg-foot">
+          <button class="primary" value="save" id="saveSettings">저장</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

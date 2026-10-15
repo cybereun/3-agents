@@ -1,0 +1,13 @@
+{
+  "name": "3-agents",
+  "version": "0.1.0",
+  "description": "ChatGPT · Gemini · Claude 에게 동시에 묻고, 세 답변을 하나로 합의시키는 앱",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "MOCK=1 node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}
