@@ -4,15 +4,24 @@ ChatGPT · Gemini · Claude 에게 **동시에 질문**하고, 세 답변을 **�
 
 ![logo](public/icons/icon-192.png)
 
-## 실행
+## 실행 (로그인 방식, API 키 불필요)
+
+공식 CLI 3종을 **한 번만 설치·로그인**해 두면, 앱이 그 CLI를 실행해 구독 계정으로 질의합니다.
 
 ```bash
-cp .env.example .env     # 키 입력 (또는 앱 설정 창에서 입력)
-npm start                # → http://127.0.0.1:3000
+npm i -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
+
+claude          # 실행 후 /login  → Claude 구독 계정
+codex login     # → ChatGPT 계정
+gemini          # 'Login with Google' 선택
+
+npm start       # → http://127.0.0.1:3000   (설치된 CLI는 자동 감지)
 ```
 
+API 키 방식을 쓰려면 `cp .env.example .env` 후 키를 넣거나, 앱 설정(⚙)에서 제공자별로 **API 키** 방식을 고르세요.
+
 - 의존성 없음. Node 20+ 만 있으면 됩니다.
-- 키 없이 화면만 체험: `npm run dev` (데모 모드, 실제 AI를 호출하지 않음)
+- 로그인·키 없이 화면만 체험: `npm run dev` (데모 모드, 실제 AI를 호출하지 않음)
 - 테스트: `npm test`
 - 크롬/엣지에서 주소창의 **설치** 버튼을 누르면 독립 창 앱(PWA)으로 쓸 수 있습니다.
 
@@ -27,9 +36,24 @@ npm start                # → http://127.0.0.1:3000
 - 종합 결과는 `최종 답변 / 합의 현황(일치·충돌·단일 출처) / 신뢰도` 구조입니다.
 - 한 AI가 실패해도 나머지 2개 이상이면 합의를 진행합니다.
 
+## 연결 방식: 로그인(CLI) vs API 키
+
+| | 로그인(CLI) | API 키 |
+| --- | --- | --- |
+| 비용 | 기존 구독 사용량에서 차감 | 호출당 종량 과금 |
+| 스트리밍 | Claude·Gemini 지원, Codex는 완료 후 한꺼번에 | 3사 모두 |
+| 속도 | 호출마다 CLI 기동 시간(수 초) 추가 | 빠름 |
+| 모델 | 비우면 로그인한 계정의 기본 모델 | 목록 조회 후 선택 |
+| 안정성 | CLI 버전·옵션 변화에 영향 | 공식 API 계약 |
+
+CLI 호출은 안전하게 격리됩니다: 도구/MCP/플러그인 비활성, 읽기 전용, 빈 임시 폴더에서 실행, 프롬프트는 stdin 전달.
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` 환경변수는 자식 프로세스에서 제거해서, 실수로 구독 대신 API 과금 경로를 타지 않게 합니다.
+
 ## 주의할 점
 
-- **API 키가 필요합니다.** ChatGPT Plus, Gemini Advanced, Claude Pro 같은 구독과 API는 별도 과금입니다.
+- **구독 사용량을 빠르게 씁니다.** 질문 1개 = CLI 4회(빠른 합의) 또는 7회(토론 합의). 사용량 한도(5시간/주간 등)에 걸리면 해당 카드에 한도 초과 메시지가 뜹니다.
+- **개인 사용 전용으로 쓰세요.** 이 앱은 공식 CLI를 *실행만* 하고 토큰·쿠키·자격 증명 파일은 읽지 않습니다. 구독 토큰을 꺼내 다른 앱이나 서버에서 대신 쓰는 방식은 각 사 약관이 금지하거나 제한합니다(특히 Anthropic). 이 서버를 다른 사람과 공유하지 마세요.
+- 세 CLI의 약관·옵션은 바뀔 수 있습니다. 오류가 나면 카드의 메시지를 먼저 확인하세요(미설치·미로그인·한도·버전 오래됨을 구분해 안내합니다).
 - 세 모델이 **일치한다고 맞는 것은 아닙니다.** 같은 학습 데이터의 같은 오류를 공유할 수 있습니다. 사실 확인이 필요한 답은 '신뢰도'와 '단일 출처' 항목을 보고 직접 검증하세요.
 - 모델명은 자주 바뀝니다. 기본값은 `.env.example` 에 있고, 404가 나면 설정 창의 **목록 불러오기**로 내 키로 쓸 수 있는 모델을 고르세요.
 
@@ -53,8 +77,9 @@ npm start                # → http://127.0.0.1:3000
 
 ```
 server.js            정적 파일 + /api/chat(NDJSON 스트림) /api/models /api/config
-lib/providers.js     OpenAI · Gemini · Anthropic 스트리밍 어댑터, 모델 목록, 데모 모드
+lib/providers.js     OpenAI · Gemini · Anthropic API 스트리밍 어댑터, 모델 목록, 데모 모드
+lib/cli.js           claude · codex · gemini CLI 실행 어댑터 (격리, 파싱, 중단/타임아웃)
 public/              index.html · styles.css · app.js · markdown.js · icons/
 scripts/make-icons   SVG → PNG 아이콘 생성 (개발용, playwright 필요)
-test/                node:test (렌더러 XSS, 어댑터 파싱, 서버 보안)
+test/                node:test (렌더러 XSS, API/CLI 어댑터, 서버 보안) + test/fixtures 가짜 CLI
 ```

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
+import { detectCli, resolveCmd } from './lib/cli.js';
 import { PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -87,8 +88,10 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
     const { provider } = body;
     if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new HttpError(400, '질문이 비어 있습니다.');
     if (body.prompt.length > MAX_PROMPT) throw new HttpError(413, '질문이 너무 깁니다.');
-    const apiKey = resolveKey(provider, body.apiKey);
-    const model = (typeof body.model === 'string' && body.model.trim()) || getModel(provider, env);
+    const viaCli = body.auth === 'cli';
+    const apiKey = viaCli ? '' : resolveKey(provider, body.apiKey);
+    // CLI 는 모델을 비우면 로그인한 계정의 기본 모델을 쓴다 (구독별로 쓸 수 있는 모델이 다르다)
+    const model = (typeof body.model === 'string' && body.model.trim()) || (viaCli ? '' : getModel(provider, env));
 
     res.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
@@ -104,6 +107,8 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
       for await (const text of streamChat({
         provider,
         mock,
+        auth: viaCli ? 'cli' : 'api',
+        env,
         model,
         apiKey,
         system: typeof body.system === 'string' ? body.system : '',
@@ -133,9 +138,23 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
     }
   }
 
-  function handleConfig(res) {
+  let cliCache = { at: 0, data: null };
+  async function cliStatus(force) {
+    if (mock) {
+      return Object.fromEntries(
+        PROVIDERS.map((p) => [p, { cmd: resolveCmd(p, env), installed: true, version: 'mock', install: '', login: '' }]),
+      );
+    }
+    if (!force && cliCache.data && Date.now() - cliCache.at < 30_000) return cliCache.data;
+    const entries = await Promise.all(PROVIDERS.map(async (p) => [p, await detectCli(p, env)]));
+    cliCache = { at: Date.now(), data: Object.fromEntries(entries) };
+    return cliCache.data;
+  }
+
+  async function handleConfig(res, refresh) {
     sendJson(res, 200, {
       mock,
+      cli: await cliStatus(refresh),
       providers: Object.fromEntries(
         PROVIDERS.map((p) => [p, { serverKey: Boolean(getServerKey(p, env)), model: getModel(p, env) }]),
       ),
@@ -163,9 +182,9 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
   return http.createServer(async (req, res) => {
     try {
       guard(req);
-      const { pathname } = new URL(req.url, 'http://localhost');
+      const { pathname, searchParams } = new URL(req.url, 'http://localhost');
       if (pathname.startsWith('/api/')) {
-        if (pathname === '/api/config' && req.method === 'GET') return handleConfig(res);
+        if (pathname === '/api/config' && req.method === 'GET') return await handleConfig(res, searchParams.has('refresh'));
         if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed');
         if (pathname === '/api/chat') return await handleChat(req, res);
         if (pathname === '/api/models') return await handleModels(req, res);

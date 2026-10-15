@@ -199,7 +199,7 @@ button { cursor: pointer; }
 .meta { margin: 0; color: var(--muted); font-size: 12.5px; }
 .head-actions { margin-left: auto; display: flex; gap: 8px; }
 .legend { margin: 18px 0 0; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--muted); }
-.placeholder { color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.placeholder { color: var(--muted); display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 
 /* 마크다운 */
 .md > :first-child { margin-top: 0; }
@@ -238,8 +238,15 @@ button { cursor: pointer; }
 .provider { padding: 14px 0; border-top: 1px solid var(--line); }
 .provider-head { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 10px; }
 .provider-head svg { width: 18px; height: 18px; color: var(--agent); }
-.provider-head small { margin-left: auto; font-weight: 500; font-size: 12px; color: var(--muted); }
-.provider-head small.ok { color: var(--ok); }
+.provider-head small { font-weight: 500; font-size: 12px; color: var(--muted); }
+.provider-head .seg { margin-left: auto; }
+.seg.small button { padding: 4px 10px; font-size: 12px; }
+.provider[data-auth="cli"] .only-api, .provider[data-auth="api"] .only-cli { display: none; }
+.cli-status { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.cli-status .ghost { margin-left: auto; }
+.cli-status.ok { color: var(--ok); }
+.cli-status.bad { color: var(--danger); }
+.hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
 .field { display: block; margin-bottom: 10px; }
 .field > span { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; color: var(--muted); }
 .field small { font-weight: 400; margin-left: 6px; }

@@ -30,7 +30,9 @@ let lastRound = null; // 합의 재시도를 위한 직전 라운드
 function loadSettings() {
   const base = {
     keys: {},
-    models: {},
+    models: {}, // API 방식 모델
+    cliModels: {}, // CLI 방식 모델 (비우면 로그인한 계정의 기본 모델)
+    auth: {}, // 제공자별 연결 방식: 'cli' | 'api' (미설정이면 CLI 설치 시 cli)
     enabled: { openai: true, gemini: true, anthropic: true },
     mode: 'fast',
     synth: 'anthropic',
@@ -50,8 +52,21 @@ function saveSettings() {
   }
 }
 
-const hasKey = (id) => Boolean(settings.keys[id]?.trim() || serverCfg.providers[id]?.serverKey || serverCfg.mock);
-const modelOf = (id) => settings.models[id]?.trim() || serverCfg.providers[id]?.model || '';
+const cliInfo = (id) => serverCfg.cli?.[id];
+const authOf = (id) => settings.auth[id] || (cliInfo(id)?.installed ? 'cli' : 'api');
+const hasKey = (id) =>
+  authOf(id) === 'cli'
+    ? Boolean(cliInfo(id)?.installed)
+    : Boolean(settings.keys[id]?.trim() || serverCfg.providers[id]?.serverKey || serverCfg.mock);
+const modelOf = (id) =>
+  authOf(id) === 'cli'
+    ? settings.cliModels[id]?.trim() || ''
+    : settings.models[id]?.trim() || serverCfg.providers[id]?.model || '';
+const modelLabel = (id) => modelOf(id) || (authOf(id) === 'cli' ? 'CLI 기본 모델' : '');
+const notReadyMessage = (id) =>
+  authOf(id) === 'cli'
+    ? `'${cliInfo(id)?.cmd ?? 'CLI'}' 가 감지되지 않았습니다. 설치: ${cliInfo(id)?.install} — 그리고 ${cliInfo(id)?.login}. 설정(⚙)에서 API 키 방식으로 바꿀 수도 있습니다.`
+    : 'API 키가 없습니다. 설정(⚙)에서 키를 입력하거나 .env 에 추가하세요.';
 
 /* ---------- 유틸 ---------- */
 function toast(msg) {
@@ -100,8 +115,9 @@ async function callAgent(provider, { system, prompt, role, signal, onText }) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       provider,
-      model: settings.models[provider] || '',
-      apiKey: settings.keys[provider] || '',
+      auth: authOf(provider),
+      model: authOf(provider) === 'cli' ? settings.cliModels[provider] || '' : settings.models[provider] || '',
+      apiKey: authOf(provider) === 'api' ? settings.keys[provider] || '' : '',
       system,
       prompt,
       role,
@@ -171,7 +187,7 @@ function buildCard(agent) {
   api.renderMain = makeRenderer(api.mainEl);
   api.renderRev = makeRenderer(api.revEl);
   api.copyBtn.addEventListener('click', () => copy(api.revised || api.text));
-  api.model.textContent = modelOf(agent.id);
+  api.model.textContent = modelLabel(agent.id);
   return api;
 }
 
@@ -263,9 +279,10 @@ async function ask(question) {
       setStatus(c, 'run', '작성 중');
       if (!hasKey(a.id)) {
         c.mainEl.classList.remove('streaming');
-        setStatus(c, 'err', '키 없음');
-        return showError(c, 'main', 'API 키가 없습니다. 설정(⚙)에서 키를 입력하거나 .env 에 추가하세요.');
+        setStatus(c, 'err', authOf(a.id) === 'cli' ? 'CLI 없음' : '키 없음');
+        return showError(c, 'main', notReadyMessage(a.id));
       }
+      c.mainEl.innerHTML = '<p class="placeholder">응답을 기다리는 중…</p>';
       try {
         c.text = await callAgent(a.id, {
           system: SYSTEM_ANSWER,
@@ -404,7 +421,9 @@ function renderChips() {
     b.className = 'chip';
     b.style.setProperty('--agent', `var(--c-${a.id})`);
     b.setAttribute('aria-pressed', String(settings.enabled[a.id]));
-    b.title = hasKey(a.id) ? `${a.name} 사용 가능` : `${a.name}: API 키가 필요합니다`;
+    b.title = hasKey(a.id)
+      ? `${a.name} 사용 가능 (${authOf(a.id) === 'cli' ? '로그인 CLI' : 'API 키'})`
+      : `${a.name}: ${authOf(a.id) === 'cli' ? 'CLI 설치가 필요합니다' : 'API 키가 필요합니다'}`;
     b.innerHTML = `${svgUse('g-' + a.id)}${a.name}<span class="dot ${hasKey(a.id) ? 'ok' : ''}"></span>`;
     b.addEventListener('click', () => {
       settings.enabled[a.id] = !settings.enabled[a.id];
@@ -445,25 +464,71 @@ function autosize() {
 }
 
 /* ---------- 설정 창 ---------- */
+const draftAuth = {};
+
 function renderSettings() {
   const wrap = $('#providerFields');
   wrap.replaceChildren();
   for (const a of AGENTS) {
+    draftAuth[a.id] = authOf(a.id);
     const serverKey = serverCfg.providers[a.id]?.serverKey;
+    const cli = cliInfo(a.id);
     const sec = document.createElement('section');
     sec.className = 'provider';
+    sec.dataset.auth = draftAuth[a.id];
     sec.style.setProperty('--agent', `var(--c-${a.id})`);
     sec.innerHTML = `
-      <div class="provider-head">${svgUse('g-' + a.id)}${a.name}
-        <small class="${serverKey ? 'ok' : ''}">${serverKey ? '서버 .env 키 사용 가능' : a.vendor}</small></div>
-      <label class="field"><span>API 키</span>
-        <input type="password" data-key="${a.id}" placeholder="${serverKey ? '(비워 두면 서버 키 사용)' : a.keyHint}" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>모델</span>
-        <div class="model-row"><input type="text" data-model="${a.id}" list="models-${a.id}" placeholder="${serverCfg.providers[a.id]?.model || ''}" spellcheck="false">
-        <button type="button" class="ghost" data-load="${a.id}">목록 불러오기</button></div>
-        <datalist id="models-${a.id}"></datalist></label>`;
+      <div class="provider-head">${svgUse('g-' + a.id)}${a.name}<small>${a.vendor}</small>
+        <div class="seg small" role="radiogroup" aria-label="${a.name} 연결 방식">
+          <button type="button" role="radio" data-auth="cli">로그인(CLI)</button>
+          <button type="button" role="radio" data-auth="api">API 키</button>
+        </div></div>
+
+      <div class="only-cli">
+        <p class="cli-status ${cli?.installed ? 'ok' : 'bad'}">
+          ${cli?.installed ? `✓ <code></code> 감지됨` : `✗ <code></code> 를 찾을 수 없습니다`}
+          <button type="button" class="ghost" data-recheck>다시 확인</button></p>
+        <p class="hint cli-hint"></p>
+        <label class="field"><span>모델 <small>비우면 로그인한 계정의 기본 모델</small></span>
+          <input type="text" data-model-cli="${a.id}" spellcheck="false" placeholder="(기본 모델)"></label>
+      </div>
+
+      <div class="only-api">
+        <label class="field"><span>API 키 <small>${serverKey ? '서버 .env 키 사용 가능' : ''}</small></span>
+          <input type="password" data-key="${a.id}" placeholder="${serverKey ? '(비워 두면 서버 키 사용)' : a.keyHint}" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span>모델</span>
+          <div class="model-row"><input type="text" data-model-api="${a.id}" list="models-${a.id}" placeholder="${serverCfg.providers[a.id]?.model || ''}" spellcheck="false">
+          <button type="button" class="ghost" data-load="${a.id}">목록 불러오기</button></div>
+          <datalist id="models-${a.id}"></datalist></label>
+      </div>`;
+    // 서버가 돌려준 문자열은 textContent 로만 넣는다
+    const codes = sec.querySelectorAll('.cli-status code');
+    if (codes[0]) codes[0].textContent = cli ? `${cli.cmd.split(/[\\/]/).pop()}${cli.version ? ' ' + cli.version : ''}` : '';
+    sec.querySelector('.cli-hint').textContent = `${cli?.installed ? '' : `설치: ${cli?.install ?? ''}  ·  `}${cli?.login ?? ''}. 로그인은 터미널에서 한 번만 하면 됩니다.`;
     sec.querySelector('[data-key]').value = settings.keys[a.id] || '';
-    sec.querySelector('[data-model]').value = settings.models[a.id] || '';
+    sec.querySelector('[data-model-api]').value = settings.models[a.id] || '';
+    sec.querySelector('[data-model-cli]').value = settings.cliModels[a.id] || '';
+    for (const b of sec.querySelectorAll('[data-auth]')) {
+      b.setAttribute('aria-checked', String(b.dataset.auth === draftAuth[a.id]));
+      b.addEventListener('click', () => {
+        draftAuth[a.id] = b.dataset.auth;
+        sec.dataset.auth = draftAuth[a.id];
+        for (const o of sec.querySelectorAll('[data-auth]')) o.setAttribute('aria-checked', String(o === b));
+      });
+    }
+    sec.querySelector('[data-recheck]').addEventListener('click', async () => {
+      try {
+        serverCfg = await (await fetch('/api/config?refresh=1')).json();
+        const keep = { ...draftAuth };
+        applyDraftToSettings();
+        renderSettings();
+        for (const id of Object.keys(keep)) draftAuth[id] = keep[id];
+        renderChips();
+        toast('다시 확인했습니다');
+      } catch {
+        toast('확인에 실패했습니다');
+      }
+    });
     sec.querySelector('[data-load]').addEventListener('click', (e) => loadModels(a.id, sec, e.currentTarget));
     wrap.append(sec);
   }
@@ -486,7 +551,7 @@ async function loadModels(id, sec, btn) {
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     sec.querySelector('datalist').replaceChildren(...j.models.map((m) => new Option(m)));
     toast(`${j.models.length}개 모델을 불러왔습니다. 입력창을 눌러 고르세요`);
-    sec.querySelector('[data-model]').focus();
+    sec.querySelector('[data-model-api]').focus();
   } catch (err) {
     toast(err.message.slice(0, 120));
   } finally {
@@ -495,15 +560,21 @@ async function loadModels(id, sec, btn) {
   }
 }
 
-function applySettingsFromDialog() {
+function applyDraftToSettings() {
   for (const a of AGENTS) {
+    settings.auth[a.id] = draftAuth[a.id] || authOf(a.id);
     settings.keys[a.id] = document.querySelector(`[data-key="${a.id}"]`).value.trim();
-    settings.models[a.id] = document.querySelector(`[data-model="${a.id}"]`).value.trim();
+    settings.models[a.id] = document.querySelector(`[data-model-api="${a.id}"]`).value.trim();
+    settings.cliModels[a.id] = document.querySelector(`[data-model-cli="${a.id}"]`).value.trim();
   }
   settings.synth = $('#synthSelect').value;
+}
+
+function applySettingsFromDialog() {
+  applyDraftToSettings();
   saveSettings();
   renderChips();
-  for (const a of AGENTS) if (cards[a.id]) cards[a.id].model.textContent = modelOf(a.id);
+  for (const a of AGENTS) if (cards[a.id]) cards[a.id].model.textContent = modelLabel(a.id);
 }
 
 /* ---------- 초기화 ---------- */
