@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
-import { CLI_PROVIDERS, detectCli, resolveCmd } from './lib/cli.js';
+import { CLI_PROVIDERS, detectCli, listCliModels, resolveCmd } from './lib/cli.js';
 import { PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -119,6 +119,10 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
         prompt: body.prompt,
         role: body.role,
         signal: ac.signal,
+        onMeta: (m) => {
+          // 실제로 응답한 모델명을 화면에 알린다 (길이/형식 제한)
+          if (typeof m?.model === 'string' && /^[\w.:\-/]{1,80}$/.test(m.model) && !res.writableEnded) emit({ t: 'meta', model: m.model });
+        },
       })) {
         emit({ t: 'delta', text });
       }
@@ -132,13 +136,17 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
   async function handleModels(req, res) {
     const body = await readJson(req);
     checkProvider(body.provider);
-    if (mock) return sendJson(res, 200, { models: ['mock-model-1', 'mock-model-2'] });
-    const apiKey = resolveKey(body.provider, body.apiKey);
+    if (mock) return sendJson(res, 200, { models: ['mock-model-1', 'mock-model-2'].map((id) => ({ id, label: id })) });
     try {
-      const models = await listModels({ provider: body.provider, apiKey });
+      if (body.auth === 'cli') {
+        if (!CLI_PROVIDERS.includes(body.provider)) throw new HttpError(400, 'CLI 방식을 지원하지 않는 제공자입니다.');
+        return sendJson(res, 200, { models: await listCliModels(body.provider, env) });
+      }
+      const apiKey = resolveKey(body.provider, body.apiKey);
+      const models = (await listModels({ provider: body.provider, apiKey })).map((id) => ({ id, label: id }));
       sendJson(res, 200, { models });
     } catch (err) {
-      sendJson(res, 502, { error: err.message });
+      sendJson(res, err instanceof HttpError ? err.status : 502, { error: err.message });
     }
   }
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { detectCli, streamCli } from '../lib/cli.js';
+import { detectCli, listCliModels, streamCli } from '../lib/cli.js';
 import { createAppServer } from '../server.js';
 
 const fx = (n) => path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
@@ -143,4 +143,53 @@ test('winQuote: 안전한 토큰은 그대로, 빈 문자열/공백/따옴표는
   assert.equal(winQuote('C:\\Users\\Foo Bar\\x'), '"C:\\Users\\Foo Bar\\x"');
   assert.equal(winQuote('a"b'), '"a\\"b"');
   assert.equal(winQuote('Answer the request above.'), '"Answer the request above."');
+});
+
+test('실제 응답 모델: claude 는 init 이벤트, codex 는 stderr 헤더에서 읽어 onMeta 로 알린다', opts, async () => {
+  const seen = [];
+  await ask('anthropic', 'x', { onMeta: (m) => seen.push(m.model) });
+  assert.deepEqual([...new Set(seen)], ['claude-default-x'], '모델을 안 고르면 CLI 기본 모델이 보고된다');
+
+  const alias = [];
+  await ask('anthropic', 'x', { model: 'sonnet', onMeta: (m) => alias.push(m.model) });
+  assert.equal(alias[0], 'actual-sonnet', '별칭이 아니라 실제 모델명이 보고되어야 한다');
+
+  const codex = [];
+  await ask('openai', 'x', { onMeta: (m) => codex.push(m.model) });
+  assert.deepEqual(codex, ['codex-default-y']);
+  const picked = [];
+  await ask('openai', 'x', { model: 'gpt-a', onMeta: (m) => picked.push(m.model) });
+  assert.deepEqual(picked, ['gpt-a']);
+});
+
+test('listCliModels: codex 는 카탈로그에서 숨김/이상한 이름을 빼고 우선순위로 정렬, claude 는 별칭+전체 ID', opts, async () => {
+  const codex = await listCliModels('openai', ENV);
+  assert.deepEqual(codex.map((m) => m.id), ['gpt-a', 'gpt-b']);
+  assert.equal(codex[0].label, 'GPT-A (gpt-a)');
+  const claude = await listCliModels('anthropic', ENV);
+  assert.ok(['sonnet', 'opus', 'haiku', 'fable'].every((a) => claude.some((m) => m.id === a)));
+  assert.ok(claude.some((m) => /^claude-/.test(m.id)));
+  await assert.rejects(listCliModels('openai', { CODEX_CMD: '/nonexistent/codex' }), /모델 목록을 읽지 못했습니다/);
+});
+
+test('서버: /api/models(auth=cli) 와 /api/chat 의 meta 이벤트', opts, async () => {
+  const server = createAppServer({ env: ENV });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const ok = await post('/api/models', { provider: 'openai', auth: 'cli' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual((await ok.json()).models.map((m) => m.id), ['gpt-a', 'gpt-b']);
+    const gem = await post('/api/models', { provider: 'gemini', auth: 'cli' });
+    assert.equal(gem.status, 400, '상태 코드가 502 로 바뀌지 않아야 한다');
+
+    const chat = await post('/api/chat', { provider: 'anthropic', auth: 'cli', model: 'opus', prompt: 'hi' });
+    const events = (await chat.text()).trim().split('\n').map((l) => JSON.parse(l));
+    const metas = events.filter((e) => e.t === 'meta');
+    assert.ok(metas.length >= 1 && metas.every((m) => m.model === 'actual-opus'));
+    assert.equal(events.at(-1).t, 'done');
+  } finally {
+    server.close();
+  }
 });

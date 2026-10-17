@@ -7,9 +7,19 @@ if (args[0] === '--version') {
   console.log('codex-cli 9.9.9');
   process.exit(0);
 }
+if (args[0] === 'debug' && args[1] === 'models') {
+  console.log(JSON.stringify({ models: [
+    { slug: 'gpt-b', display_name: 'GPT-B', visibility: 'list', priority: 2 },
+    { slug: 'gpt-hidden', display_name: 'Hidden', visibility: 'hide', priority: 1 },
+    { slug: 'gpt-a', display_name: 'GPT-A', visibility: 'list', priority: 1 },
+    { slug: 'bad name;rm', display_name: 'Evil', visibility: 'list', priority: 3 },
+  ] }));
+  process.exit(0);
+}
 const input = readFileSync(0, 'utf8');
 const outFile = args[args.indexOf('-o') + 1];
 console.error('WARNING: proceeding, even though we could not create PATH aliases');
+console.error('OpenAI Codex v9.9.9\n--------\nworkdir: /x\nmodel: ' + (args.includes('-m') ? args[args.indexOf('-m') + 1] : 'codex-default-y') + '\nprovider: openai\n--------');
 if (input.includes('FAIL')) {
   console.error('ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication');
   process.exit(101);

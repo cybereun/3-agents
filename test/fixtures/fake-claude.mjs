@@ -10,7 +10,7 @@ if (args[0] === '--version') {
 const input = readFileSync(0, 'utf8');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 out({ type: 'active_goal', value: null });
-out({ type: 'system', subtype: 'init', tools: [] });
+out({ type: 'system', subtype: 'init', tools: [], model: args.includes('--model') ? 'actual-' + args[args.indexOf('--model') + 1] : 'claude-default-x' });
 
 if (input.includes('NOT_LOGGED_IN')) {
   out({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });

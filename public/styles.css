@@ -397,3 +397,7 @@ button { cursor: pointer; }
   .ig-hero { padding: 22px 20px; }
   .tabs button { padding: 9px 6px; font-size: 13px; }
 }
+
+/* 실제 응답 모델 표시 */
+.card-title small[data-actual] { color: var(--agent); font-weight: 600; }
+.field select option { font-family: var(--font); }

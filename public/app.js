@@ -34,6 +34,7 @@ function loadSettings() {
     keys: {},
     models: {}, // API 방식 모델
     cliModels: {}, // CLI 방식 모델 (비우면 로그인한 계정의 기본 모델)
+    lastModel: {}, // 제공자별로 실제 응답한 모델명 (마지막으로 확인된 값)
     auth: {}, // 제공자별 연결 방식: 'cli' | 'api' (미설정이면 CLI 설치 시 cli)
     enabled: { openai: true, gemini: true, anthropic: true },
     mode: 'fast',
@@ -65,7 +66,12 @@ const modelOf = (id) =>
   authOf(id) === 'cli'
     ? settings.cliModels[id]?.trim() || ''
     : settings.models[id]?.trim() || serverCfg.providers[id]?.model || '';
-const modelLabel = (id) => modelOf(id) || (authOf(id) === 'cli' ? 'CLI 기본 모델' : '');
+const modelLabel = (id) => modelOf(id) || (authOf(id) === 'cli' ? `CLI 기본 모델${settings.lastModel[id] ? ` (최근: ${settings.lastModel[id]})` : ''}` : '');
+function rememberModel(id, model) {
+  if (settings.lastModel[id] === model) return;
+  settings.lastModel[id] = model;
+  saveSettings();
+}
 const notReadyMessage = (id) =>
   authOf(id) === 'cli'
     ? `'${cliInfo(id)?.cmd ?? 'CLI'}' 가 감지되지 않았습니다. 설치: ${cliInfo(id)?.install} — 그리고 ${cliInfo(id)?.login}. 설정(⚙)에서 API 키 방식으로 바꿀 수도 있습니다.`
@@ -111,7 +117,7 @@ async function copy(text) {
 const svgUse = (id) => `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
 
 /* ---------- 서버 호출 (NDJSON 스트림) ---------- */
-async function callAgent(provider, { system, prompt, role, signal, onText }) {
+async function callAgent(provider, { system, prompt, role, signal, onText, onModel }) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     signal,
@@ -147,6 +153,8 @@ async function callAgent(provider, { system, prompt, role, signal, onText }) {
       if (ev.t === 'delta') {
         text += ev.text;
         onText(text);
+      } else if (ev.t === 'meta') {
+        onModel?.(ev.model);
       } else if (ev.t === 'error') {
         throw new Error(ev.message);
       }
@@ -331,6 +339,7 @@ async function ask(question) {
           role: 'answer',
           signal: ctl.signal,
           onText: c.renderMain,
+          onModel: (m) => showActualModel(a.id, m),
         });
         c.renderMain.flush(c.text);
         setStatus(c, 'done', `${((performance.now() - c.started) / 1000).toFixed(1)}초`);
@@ -374,6 +383,7 @@ async function ask(question) {
             role: 'revise',
             signal: ctl.signal,
             onText: c.renderRev,
+            onModel: (m) => showActualModel(a.id, m),
           });
           c.renderRev.flush(c.revised);
           setStatus(c, 'done', '검토 완료');
@@ -404,7 +414,12 @@ async function runConsensus(ctl) {
   const ids = answers.map((a) => a.id);
   const synthId = ids.includes(settings.synth) && hasKey(settings.synth) ? settings.synth : ids.find(hasKey) || ids[0];
   const synth = BY_ID[synthId];
-  $('#consensusMeta').textContent = `${synth.name}가 ${answers.length}개 답변을 종합 · ${debated ? '토론 합의' : '빠른 합의'}`;
+  let synthModel = '';
+  const showMeta = () => {
+    const who = synthModel ? `${synth.name}(${synthModel})` : synth.name;
+    $('#consensusMeta').textContent = `${who}가 ${answers.length}개 답변을 종합 · ${debated ? '토론 합의' : '빠른 합의'}`;
+  };
+  showMeta();
   $('#retryConsensus').hidden = true;
   lastRound.result = '';
   lastRound.summary = null;
@@ -420,6 +435,11 @@ async function runConsensus(ctl) {
       prompt: consensusPrompt(question, answers, debated),
       role: 'consensus',
       signal: ctl.signal,
+      onModel: (m) => {
+        synthModel = m;
+        rememberModel(synthId, m);
+        showMeta();
+      },
       onText: (t) => {
         body.classList.add('md');
         render(splitConsensus(t).markdown); // 요약 JSON 블록은 본문에 보이지 않게 한다
@@ -444,6 +464,16 @@ async function runConsensus(ctl) {
   } finally {
     body.classList.remove('streaming');
   }
+}
+
+/** 카드 헤더에 실제로 응답한 모델명을 표시한다 (별칭/기본값이 아니라 CLI·API 가 알려준 값) */
+function showActualModel(id, model) {
+  rememberModel(id, model);
+  const el = cards[id]?.model;
+  if (!el) return;
+  el.textContent = model;
+  el.title = '실제로 응답한 모델';
+  el.dataset.actual = '1';
 }
 
 function setConsensus(kind, text) {
@@ -555,8 +585,10 @@ function renderSettings() {
           ${cli?.installed ? `✓ <code></code> 감지됨` : `✗ <code></code> 를 찾을 수 없습니다`}
           <button type="button" class="ghost" data-recheck>다시 확인</button></p>
         <p class="hint cli-hint"></p>
-        <label class="field"><span>모델 <small>비우면 로그인한 계정의 기본 모델</small></span>
-          <input type="text" data-model-cli="${a.id}" spellcheck="false" placeholder="(기본 모델)"></label>
+        <div class="field"><span>모델 <small data-last></small></span>
+          <select data-model-select="${a.id}"><option value="">불러오는 중…</option></select>
+          <input type="text" data-model-cli="${a.id}" hidden spellcheck="false" placeholder="모델 이름 직접 입력 (예: gpt-5.5)" style="margin-top:6px">
+        </div>
       </div>
 
       <div class="only-api">
@@ -575,6 +607,8 @@ function renderSettings() {
     sec.querySelector('[data-key]').value = settings.keys[a.id] || '';
     sec.querySelector('[data-model-api]').value = settings.models[a.id] || '';
     sec.querySelector('[data-model-cli]').value = settings.cliModels[a.id] || '';
+    sec.querySelector('[data-last]').textContent = settings.lastModel[a.id] ? `최근 실제 응답: ${settings.lastModel[a.id]}` : '';
+    if (supportsCli(a.id)) fillCliModelSelect(a.id, sec);
     for (const b of sec.querySelectorAll('[data-auth]')) {
       b.setAttribute('aria-checked', String(b.dataset.auth === draftAuth[a.id]));
       b.addEventListener('click', () => {
@@ -604,6 +638,45 @@ function renderSettings() {
   sel.value = settings.synth;
 }
 
+const cliModelCache = {};
+
+/** CLI 방식 모델 드롭다운을 채운다: 자동(기본) + 목록 + 직접 입력 */
+async function fillCliModelSelect(id, sec) {
+  const select = sec.querySelector('[data-model-select]');
+  const input = sec.querySelector('[data-model-cli]');
+  const saved = input.value.trim();
+  let models = cliModelCache[id];
+  let failed = '';
+  if (!models) {
+    try {
+      const res = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: id, auth: 'cli' }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      models = cliModelCache[id] = j.models;
+    } catch (err) {
+      models = [];
+      failed = err.message;
+    }
+  }
+  const opts = [new Option('자동 — 로그인한 계정의 기본 모델', '')];
+  for (const m of models) opts.push(new Option(m.label || m.id, m.id));
+  if (saved && !models.some((m) => m.id === saved)) opts.push(new Option(`${saved} (저장된 값)`, saved));
+  opts.push(new Option('직접 입력…', '__custom'));
+  select.replaceChildren(...opts);
+  select.value = saved || '';
+  if (failed) toast(`모델 목록을 못 불러왔습니다. 직접 입력할 수 있습니다. (${failed.slice(0, 80)})`);
+  select.onchange = () => {
+    const custom = select.value === '__custom';
+    input.hidden = !custom;
+    if (custom) input.focus();
+    else input.value = select.value;
+  };
+}
+
 async function loadModels(id, sec, btn) {
   const key = sec.querySelector('[data-key]').value.trim();
   btn.disabled = true;
@@ -616,7 +689,7 @@ async function loadModels(id, sec, btn) {
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
-    sec.querySelector('datalist').replaceChildren(...j.models.map((m) => new Option(m)));
+    sec.querySelector('datalist').replaceChildren(...j.models.map((m) => new Option(m.id)));
     toast(`${j.models.length}개 모델을 불러왔습니다. 입력창을 눌러 고르세요`);
     sec.querySelector('[data-model-api]').focus();
   } catch (err) {

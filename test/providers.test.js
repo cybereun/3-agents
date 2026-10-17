@@ -135,3 +135,26 @@ test('모델 목록: 제공자별로 필터링하고 정렬한다', async () => 
   assert.deepEqual(await listModels({ provider: 'anthropic', apiKey: 'k' }), ['claude-b', 'claude-a']);
   assert.deepEqual(await listModels({ provider: 'gemini', apiKey: 'k' }), ['gemini-pro', 'gemini-flash']);
 });
+
+test('API 방식도 실제 응답 모델을 onMeta 로 알린다 (별칭이 실제로 어떤 모델이 됐는지)', async () => {
+  const run = async (provider, sse, model) => {
+    fakeFetch(sse);
+    const seen = [];
+    await collect(streamChat({ provider, model, apiKey: 'k', prompt: 'p', onMeta: (m) => seen.push(m.model) }));
+    return seen;
+  };
+  assert.deepEqual(
+    await run('openai', ['data: {"model":"gpt-real-1","choices":[{"delta":{"content":"a"}}]}\n\n', 'data: {"model":"gpt-real-1","choices":[{"delta":{"content":"b"}}]}\n\n', 'data: [DONE]\n\n'], 'gpt-5'),
+    ['gpt-real-1'],
+    '같은 모델명은 한 번만 보고한다',
+  );
+  assert.deepEqual(
+    await run('anthropic', ['data: {"type":"message_start","message":{"model":"claude-real-2"}}\n\n', 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"a"}}\n\n'], 'sonnet'),
+    ['claude-real-2'],
+  );
+  assert.deepEqual(
+    await run('gemini', ['data: {"modelVersion":"gemini-real-3","candidates":[{"content":{"parts":[{"text":"a"}]}}]}\n\n'], 'gemini-pro-latest'),
+    ['gemini-real-3'],
+    'gemini-pro-latest 별칭이 가리킨 실제 버전',
+  );
+});
