@@ -144,3 +144,13 @@ test('서버: auth=cli 로 /api/chat 이 CLI 를 거치고, /api/config 가 CLI 
     server.close();
   }
 });
+
+test('winQuote: 안전한 토큰은 그대로, 빈 문자열/공백/따옴표는 안전하게 감싼다 (Windows 셸 실행용)', async () => {
+  const { winQuote } = await import('../lib/cli.js');
+  assert.equal(winQuote('--output-format'), '--output-format');
+  assert.equal(winQuote('C:\\Users\\me\\out.txt'), 'C:\\Users\\me\\out.txt');
+  assert.equal(winQuote(''), '""', '빈 인자는 "" 로 유지되어야 --tools "" 가 깨지지 않는다');
+  assert.equal(winQuote('C:\\Users\\Foo Bar\\x'), '"C:\\Users\\Foo Bar\\x"');
+  assert.equal(winQuote('a"b'), '"a\\"b"');
+  assert.equal(winQuote('Answer the request above.'), '"Answer the request above."');
+});

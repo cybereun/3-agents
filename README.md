@@ -36,6 +36,26 @@ API 키 방식을 쓰려면 `cp .env.example .env` 후 키를 넣거나, 앱 설
 - 종합 결과는 `최종 답변 / 합의 현황(일치·충돌·단일 출처) / 신뢰도` 구조입니다.
 - 한 AI가 실패해도 나머지 2개 이상이면 합의를 진행합니다.
 
+## Windows 설치 (PowerShell)
+
+```powershell
+# 1) Node.js 22 LTS 와 Git for Windows 설치 (Claude Code 가 Git Bash 를 필요로 합니다)
+winget install OpenJS.NodeJS.LTS Git.Git
+
+# 2) CLI 3종 설치 후 각각 한 번씩 로그인
+npm i -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
+claude        # /login
+codex login
+gemini        # Login with Google
+
+# 3) 실행: start.bat 더블클릭 (또는 npm start) → 브라우저가 자동으로 열립니다
+```
+
+- `npm run dev` 는 데모 모드입니다 (로그인·키 없이 화면만 확인).
+- 'running scripts is disabled' 오류는 PowerShell 정책 문제입니다. 앱은 `cmd.exe` 로 CLI 를 실행하므로 영향이 없지만, 터미널에서 직접 `claude` 를 실행할 때 나면 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 로 해결합니다.
+- 설정(⚙)에서 CLI 가 '찾을 수 없음'으로 나오면, 새 터미널을 연 뒤 `where claude` 로 경로를 확인하고 `.env` 에 `CLAUDE_CMD=전체경로` 로 지정하세요.
+- Windows 에서는 자동 테스트의 가짜 CLI 항목이 건너뛰어집니다 (실제 CLI 연동은 직접 질문해 확인).
+
 ## 연결 방식: 로그인(CLI) vs API 키
 
 | | 로그인(CLI) | API 키 |

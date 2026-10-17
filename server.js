@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -201,14 +202,24 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
   });
 }
 
+/** 기본 브라우저로 주소를 연다 (고정 URL 만 전달하므로 셸 인젝션 여지 없음) */
+function openBrowser(url) {
+  const [cmd, args] =
+    process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
+}
+
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   loadEnvFile(path.join(ROOT, '.env'));
+  // 플래그로 받는 이유: `MOCK=1 node ...` 문법은 Windows(cmd/PowerShell)에서 동작하지 않는다
+  if (process.argv.includes('--mock')) process.env.MOCK = '1';
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT) || 3000;
   createAppServer({ host }).listen(port, host, () => {
     const mode = process.env.MOCK === '1' ? ' (데모 모드: 실제 AI를 호출하지 않음)' : '';
     console.log(`3 Agents → http://${host === '0.0.0.0' ? 'localhost' : host}:${port}${mode}`);
     if (!LOOPBACK.has(host)) console.warn('⚠ 외부 접속이 열려 있습니다. 서버의 API 키를 누구나 사용할 수 있습니다.');
+    if (process.argv.includes('--open')) openBrowser(`http://${LOOPBACK.has(host) ? 'localhost' : host}:${port}`);
   });
 }
