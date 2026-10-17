@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { appendFileSync, readFileSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
+import util from 'node:util';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
@@ -220,17 +222,90 @@ function openBrowser(url) {
   spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
 }
 
+/** --log: console 출력을 server.log 에 남긴다 (숨김 실행에서는 창이 없어 로그가 유일한 단서) */
+function setupFileLog(file) {
+  try {
+    if (statSync(file).size > 1_000_000) truncateSync(file, 0);
+  } catch {
+    /* 파일이 아직 없음 */
+  }
+  const write = (level, args) => {
+    const line = args.map((a) => (typeof a === 'string' ? a : util.inspect(a))).join(' ');
+    try {
+      appendFileSync(file, `${new Date().toISOString()} ${level} ${line}\n`);
+    } catch {
+      /* 로그 실패가 서버를 멈추면 안 된다 */
+    }
+  };
+  for (const [name, level] of [['log', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']]) console[name] = (...a) => write(level, a);
+}
+
+/** 포트를 쥔 게 이 앱인지 확인한다 (다른 프로그램이면 브라우저를 열지 않는다) */
+async function isOurApp(url) {
+  try {
+    const res = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(2000) });
+    return res.ok && Boolean((await res.json())?.providers);
+  } catch {
+    return false;
+  }
+}
+
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   loadEnvFile(path.join(ROOT, '.env'));
+  const flags = new Set(process.argv.slice(2));
   // 플래그로 받는 이유: `MOCK=1 node ...` 문법은 Windows(cmd/PowerShell)에서 동작하지 않는다
-  if (process.argv.includes('--mock')) process.env.MOCK = '1';
+  if (flags.has('--mock')) process.env.MOCK = '1';
+  if (flags.has('--log')) setupFileLog(path.join(ROOT, 'server.log'));
+  process.on('uncaughtException', (err) => {
+    console.error('치명적 오류:', err);
+    process.exit(1);
+  });
+
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT) || 3000;
-  createAppServer({ host }).listen(port, host, () => {
+  const url = `http://${LOOPBACK.has(host) ? 'localhost' : host}:${port}`;
+  // 실행 상태 파일: stop.bat(PID)와 start-hidden.vbs(포트)가 읽는다
+  const stateDir = process.env.APP_STATE_DIR || ROOT;
+  const pidFile = path.join(stateDir, '.server.pid');
+  const portFile = path.join(stateDir, '.server.port');
+
+  const server = createAppServer({ host });
+  server.on('error', async (err) => {
+    if (err.code !== 'EADDRINUSE') {
+      console.error('서버 오류:', err);
+      process.exit(1);
+    }
+    // 이미 이 앱이 떠 있으면 새로 띄우지 않고 브라우저만 연다
+    if (await isOurApp(url)) {
+      console.log(`이미 실행 중입니다 → ${url}`);
+      if (flags.has('--open')) openBrowser(url);
+      process.exit(0);
+    }
+    console.error(`포트 ${port} 를 다른 프로그램이 사용 중입니다. .env 에 PORT=3001 처럼 다른 포트를 지정하세요.`);
+    process.exit(1);
+  });
+  server.listen(port, host, () => {
     const mode = process.env.MOCK === '1' ? ' (데모 모드: 실제 AI를 호출하지 않음)' : '';
-    console.log(`3 Agents → http://${host === '0.0.0.0' ? 'localhost' : host}:${port}${mode}`);
+    console.log(`3 Agents → ${url}${mode}`);
     if (!LOOPBACK.has(host)) console.warn('⚠ 외부 접속이 열려 있습니다. 서버의 API 키를 누구나 사용할 수 있습니다.');
-    if (process.argv.includes('--open')) openBrowser(`http://${LOOPBACK.has(host) ? 'localhost' : host}:${port}`);
+    try {
+      writeFileSync(pidFile, String(process.pid));
+      writeFileSync(portFile, String(port));
+    } catch (err) {
+      console.error('상태 파일을 쓰지 못했습니다:', err.message);
+    }
+    process.on('exit', () => {
+      try {
+        if (readFileSync(pidFile, 'utf8') === String(process.pid)) {
+          unlinkSync(pidFile);
+          unlinkSync(portFile);
+        }
+      } catch {
+        /* 이미 지워짐 */
+      }
+    });
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, () => process.exit(0));
+    if (flags.has('--open')) openBrowser(url);
   });
 }

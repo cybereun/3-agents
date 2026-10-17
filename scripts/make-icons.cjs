@@ -30,5 +30,31 @@ const jobs = [
     await page.close();
     console.log('wrote', name);
   }
+  // Windows 바로가기용 .ico (PNG 압축 항목 방식, Vista 이상 지원)
+  const sizes = [16, 32, 48, 64, 128, 256];
+  const pngs = [];
+  for (const size of sizes) {
+    const page = await browser.newPage({ viewport: { width: size, height: size } });
+    await page.setContent(`<body style="margin:0;background:transparent">${svg.replace('<svg ', `<svg width="${size}" height="${size}" `)}</body>`);
+    pngs.push(await page.screenshot({ omitBackground: true }));
+    await page.close();
+  }
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(sizes.length, 4);
+  let offset = 6 + 16 * sizes.length;
+  const entries = sizes.map((size, i) => {
+    const e = Buffer.alloc(16);
+    e.writeUInt8(size === 256 ? 0 : size, 0);
+    e.writeUInt8(size === 256 ? 0 : size, 1);
+    e.writeUInt16LE(1, 4); // planes
+    e.writeUInt16LE(32, 6); // bit depth
+    e.writeUInt32LE(pngs[i].length, 8);
+    e.writeUInt32LE(offset, 12);
+    offset += pngs[i].length;
+    return e;
+  });
+  fs.writeFileSync(path.join(dir, 'app.ico'), Buffer.concat([header, ...entries, ...pngs]));
+  console.log('wrote app.ico');
   await browser.close();
 })();

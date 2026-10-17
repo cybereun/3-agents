@@ -71,6 +71,24 @@ codex login
 # 3) 실행: start.bat 더블클릭 (또는 npm start) → 브라우저가 자동으로 열립니다
 ```
 
+### 창 없이 실행하기 (숨김 실행)
+
+```powershell
+.\create-shortcuts.bat      # 바탕화면에 "3 Agents" / "3 Agents Stop" 바로가기를 만듭니다 (한 번만)
+```
+
+| 하고 싶은 것 | 방법 |
+| --- | --- |
+| 켜기 | 바탕화면 **3 Agents** 더블클릭 → 터미널 창 없이 서버가 켜지고 브라우저가 열립니다 |
+| 이미 켜져 있을 때 | 다시 더블클릭하면 서버를 또 띄우지 않고 브라우저만 엽니다 |
+| 끄기 | 바탕화면 **3 Agents Stop** 더블클릭 (또는 폴더의 `stop.bat`) |
+| 안 켜질 때 | 팝업이 뜹니다 → 폴더의 `server.log` 를 확인하세요 (Node 22+ 설치 여부 포함) |
+
+- 서버는 **창을 닫아도 계속 실행**됩니다. 쓰지 않을 때는 Stop 으로 끄세요.
+- `stop.bat` 은 `.server.pid` 에 기록된 **이 앱의 프로세스만** 종료합니다 (node.exe 인지 확인 후, CLI 자식 프로세스까지 정리).
+- 업데이트(`git pull`) 후에는 Stop → 다시 켜기를 해야 반영됩니다.
+- PC를 켤 때마다 자동으로 켜고 싶다면 `Win+R` → `shell:startup` 폴더에 "3 Agents" 바로가기를 복사하세요. (로그인 시 브라우저가 열립니다.)
+
 - `npm run dev` 는 데모 모드입니다 (로그인·키 없이 화면만 확인).
 - 'running scripts is disabled' 오류는 PowerShell 정책 문제입니다. 앱은 `cmd.exe` 로 CLI 를 실행하므로 영향이 없지만, 터미널에서 직접 `claude` 를 실행할 때 나면 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 로 해결합니다.
 - 설정(⚙)에서 CLI 가 '찾을 수 없음'으로 나오면, 새 터미널을 연 뒤 `where claude` 로 경로를 확인하고 `.env` 에 `CLAUDE_CMD=전체경로` 로 지정하세요.
