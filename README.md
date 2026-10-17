@@ -25,6 +25,18 @@ npm start       # → http://127.0.0.1:3000   (설치된 CLI는 자동 감지)
 - 테스트: `npm test`
 - 크롬/엣지에서 주소창의 **설치** 버튼을 누르면 독립 창 앱(PWA)으로 쓸 수 있습니다.
 
+## 결과 화면 (탭 3개)
+
+| 탭 | 내용 |
+| --- | --- |
+| 개별 답변 | 세 AI의 답변을 나란히 (토론 합의면 수정 입장 포함) |
+| 합의 답변 | 최종 답변 · 합의 현황(일치/충돌/단일 출처) · 신뢰도 |
+| 한눈에 보기 | 결론, 신뢰도 게이지, 핵심 포인트, 일치/충돌/단일 출처 개수, 직접 확인할 일 |
+
+- 인포그래픽은 합의 호출 1회에 **요약 JSON을 함께 받아** 그립니다. 추가 호출이 없어 구독 사용량이 늘지 않습니다.
+- 합의 AI가 JSON 형식을 지키지 않으면 합의 답변 본문의 섹션에서 추출해 그리고, 그 사실을 화면에 표시합니다.
+- 퍼센트 같은 수치는 그리지 않습니다. 모델이 지어낸 값이기 때문에 **개수와 문장**만 보여줍니다.
+
 ## 합의 방식
 
 | 모드 | 흐름 | API 호출 |
@@ -99,7 +111,7 @@ CLI 호출(ChatGPT·Claude)은 안전하게 격리됩니다: 도구/MCP/플러�
 server.js            정적 파일 + /api/chat(NDJSON 스트림) /api/models /api/config
 lib/providers.js     OpenAI · Gemini · Anthropic API 스트리밍 어댑터, 모델 목록, 데모 모드
 lib/cli.js           claude · codex CLI 실행 어댑터 (격리, 파싱, 중단/타임아웃)
-public/              index.html · styles.css · app.js · markdown.js · icons/
+public/              index.html · styles.css · app.js · markdown.js · summary.js · infographic.js · icons/
 scripts/make-icons   SVG → PNG 아이콘 생성 (개발용, playwright 필요)
-test/                node:test (렌더러 XSS, API/CLI 어댑터, 서버 보안) + test/fixtures 가짜 CLI
+test/                node:test (렌더러 XSS, 요약 파서, API/CLI 어댑터, 서버 보안) + test/fixtures 가짜 CLI
 ```

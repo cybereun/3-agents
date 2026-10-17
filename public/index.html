@@ -86,9 +86,18 @@
 
       <div id="examples" class="examples" aria-label="질문 예시"></div>
 
-      <section id="grid" class="grid" aria-label="각 AI의 답변" hidden></section>
+      <nav id="tabs" class="tabs" role="tablist" aria-label="결과 보기" hidden>
+        <button type="button" role="tab" id="tab-answers" data-tab="answers" aria-controls="grid" aria-selected="true">
+          <span>개별 답변</span><i class="tab-state" data-s="idle"></i></button>
+        <button type="button" role="tab" id="tab-consensus" data-tab="consensus" aria-controls="consensus" aria-selected="false" tabindex="-1">
+          <span>합의 답변</span><i class="tab-state" data-s="idle"></i></button>
+        <button type="button" role="tab" id="tab-infographic" data-tab="infographic" aria-controls="infographic" aria-selected="false" tabindex="-1" disabled>
+          <span>한눈에 보기</span><i class="tab-state" data-s="idle"></i></button>
+      </nav>
 
-      <section id="consensus" class="consensus" aria-live="polite" hidden>
+      <section id="grid" class="grid" role="tabpanel" aria-labelledby="tab-answers" hidden></section>
+
+      <section id="consensus" class="consensus" role="tabpanel" aria-labelledby="tab-consensus" aria-live="polite" hidden>
         <div class="consensus-head">
           <svg class="consensus-mark" aria-hidden="true"><use href="#logo" /></svg>
           <div>
@@ -103,6 +112,7 @@
         <div id="consensusBody" class="md"></div>
         <p id="legend" class="legend"></p>
       </section>
+      <section id="infographic" class="infographic" role="tabpanel" aria-labelledby="tab-infographic" hidden></section>
     </main>
 
     <dialog id="settings" class="settings">

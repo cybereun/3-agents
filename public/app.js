@@ -1,4 +1,6 @@
+import { renderInfographic } from './infographic.js';
 import { renderMarkdown } from './markdown.js';
+import { interpretConsensus, splitConsensus } from './summary.js';
 
 const AGENTS = [
   { id: 'openai', name: 'ChatGPT', vendor: 'OpenAI', letter: 'A', keyHint: 'sk-…' },
@@ -235,10 +237,47 @@ function consensusPrompt(question, answers, debated) {
 ## 신뢰도
 높음/보통/낮음 중 하나와 한 줄 이유
 
+마지막에, 위 내용을 요약한 JSON 을 \`\`\`json 코드펜스 하나로 덧붙이세요. 화면의 인포그래픽에 쓰이며, 코드펜스 뒤에는 아무것도 쓰지 마세요.
+- 아래 키만 사용하고, 모든 값은 문자열입니다. 숫자·퍼센트·통계를 만들어내지 마세요.
+- 답변에 없는 내용을 넣지 마세요. 해당 내용이 없으면 빈 배열 [] 을 쓰세요.
+{
+  "headline": "결론 한 문장 (60자 이내)",
+  "points": [{"title": "짧은 제목 (20자 이내)", "detail": "한 문장 설명 (80자 이내)"}],
+  "agree": ["모든 답변이 일치한 내용"],
+  "conflict": [{"issue": "쟁점", "views": "A는 …, B는 …. 판단: …"}],
+  "single": ["한 답변에만 있던 내용 (출처 기호 포함)"],
+  "confidence": {"level": "높음 또는 보통 또는 낮음", "reason": "한 줄 이유"},
+  "actions": ["독자가 직접 확인하거나 할 일 (0~4개)"]
+}
+points 는 3~5개로 쓰세요.
+
 질문:
 ${question}
 
 ${body}`;
+}
+
+/* ---------- 탭 ---------- */
+const TAB_PANELS = { answers: '#grid', consensus: '#consensus', infographic: '#infographic' };
+
+function showTab(name) {
+  if ($(`#tab-${name}`).disabled) return;
+  for (const t of Object.keys(TAB_PANELS)) {
+    const on = t === name;
+    $(TAB_PANELS[t]).hidden = !on;
+    const b = $(`#tab-${t}`);
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+  }
+}
+
+const setTabState = (name, state) => ($(`#tab-${name} .tab-state`).dataset.s = state);
+
+function resetInfographic() {
+  showTab('answers'); // 인포그래픽 탭에 있었다면 비활성화 전에 벗어난다
+  $('#infographic').replaceChildren();
+  $('#tab-infographic').disabled = true;
+  setTabState('infographic', 'idle');
 }
 
 /* ---------- 실행 흐름 ---------- */
@@ -257,19 +296,20 @@ async function ask(question) {
   lastRound = null;
 
   const grid = $('#grid');
-  grid.hidden = false;
   grid.replaceChildren();
   for (const a of agents) {
     cards[a.id] = buildCard(a);
     grid.append(cards[a.id].el);
   }
-  const panel = $('#consensus');
-  panel.hidden = false;
+  $('#tabs').hidden = false;
+  resetInfographic();
+  setTabState('answers', 'run');
+  setTabState('consensus', 'idle');
   setConsensus('placeholder', '각 AI의 답변을 기다리는 중…');
   $('#retryConsensus').hidden = true;
   $('#legend').textContent = agents.map((a) => `${a.letter} = ${a.name}`).join('  ·  ');
   $('#examples').hidden = true;
-  grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   /* 1라운드: 병렬 질의 */
   await Promise.all(
@@ -308,7 +348,9 @@ async function ask(question) {
   if (ctl.signal.aborted) return finish(ctl);
 
   let ok = agents.filter((a) => cards[a.id].text);
+  setTabState('answers', ok.length >= 2 ? 'done' : 'err');
   if (ok.length < 2) {
+    setTabState('consensus', 'err');
     setConsensus('placeholder', `합의에는 최소 2개의 답변이 필요합니다. (성공 ${ok.length}개) 오류 난 카드의 메시지를 확인하세요.`);
     return finish(ctl);
   }
@@ -316,6 +358,7 @@ async function ask(question) {
   /* 2라운드(선택): 서로의 답변을 검토하고 수정 */
   const debated = settings.mode === 'debate';
   if (debated) {
+    setTabState('answers', 'run');
     setConsensus('placeholder', '서로의 답변을 검토하는 중…');
     await Promise.all(
       ok.map(async (a) => {
@@ -343,6 +386,7 @@ async function ask(question) {
         }
       }),
     );
+    setTabState('answers', 'done');
     if (ctl.signal.aborted) return finish(ctl);
   }
 
@@ -362,6 +406,10 @@ async function runConsensus(ctl) {
   const synth = BY_ID[synthId];
   $('#consensusMeta').textContent = `${synth.name}가 ${answers.length}개 답변을 종합 · ${debated ? '토론 합의' : '빠른 합의'}`;
   $('#retryConsensus').hidden = true;
+  lastRound.result = '';
+  lastRound.summary = null;
+  resetInfographic();
+  setTabState('consensus', 'run');
   setConsensus('placeholder', '합의안을 작성하는 중…');
   const body = $('#consensusBody');
   const render = makeRenderer(body);
@@ -374,13 +422,23 @@ async function runConsensus(ctl) {
       signal: ctl.signal,
       onText: (t) => {
         body.classList.add('md');
-        render(t);
+        render(splitConsensus(t).markdown); // 요약 JSON 블록은 본문에 보이지 않게 한다
       },
     });
-    render.flush(text);
-    lastRound.result = text;
+    const { markdown, summary } = interpretConsensus(text);
+    render.flush(markdown);
+    lastRound.result = markdown;
+    lastRound.summary = summary;
+    renderInfographic($('#infographic'), summary, { legend: $('#legend').textContent, meta: $('#consensusMeta').textContent });
+    $('#tab-infographic').disabled = false;
+    setTabState('consensus', 'done');
+    setTabState('infographic', 'done');
   } catch (err) {
-    if (ctl.signal.aborted) return setConsensus('placeholder', '중지했습니다.');
+    if (ctl.signal.aborted) {
+      setTabState('consensus', 'idle');
+      return setConsensus('placeholder', '중지했습니다.');
+    }
+    setTabState('consensus', 'err');
     setConsensus('error', `합의 실패: ${err.message}`);
     $('#retryConsensus').hidden = false;
   } finally {
@@ -406,6 +464,12 @@ function setRunning(on) {
 }
 
 function finish(ctl) {
+  if (ctl.signal.aborted) {
+    for (const t of ['answers', 'consensus']) {
+      const el = $(`#tab-${t} .tab-state`);
+      if (el.dataset.s === 'run') el.dataset.s = 'idle';
+    }
+  }
   if (run?.abort === ctl) {
     setRunning(false);
     run = null;
@@ -623,6 +687,18 @@ async function init() {
       renderMode();
     });
   }
+
+  for (const b of document.querySelectorAll('#tabs [role=tab]')) b.addEventListener('click', () => showTab(b.dataset.tab));
+  $('#tabs').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const tabs = [...document.querySelectorAll('#tabs [role=tab]')].filter((t) => !t.disabled);
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    next.focus();
+    showTab(next.dataset.tab);
+    e.preventDefault();
+  });
 
   const dlg = $('#settings');
   $('#settingsBtn').addEventListener('click', () => {
