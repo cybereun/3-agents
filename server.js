@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
-import { detectCli, resolveCmd } from './lib/cli.js';
+import { CLI_PROVIDERS, detectCli, resolveCmd } from './lib/cli.js';
 import { PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -90,6 +90,9 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
     if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new HttpError(400, '질문이 비어 있습니다.');
     if (body.prompt.length > MAX_PROMPT) throw new HttpError(413, '질문이 너무 깁니다.');
     const viaCli = body.auth === 'cli';
+    if (viaCli && !CLI_PROVIDERS.includes(provider)) {
+      throw new HttpError(400, `${provider} 는 CLI 로그인 방식을 지원하지 않습니다. API 키를 사용하세요.`);
+    }
     const apiKey = viaCli ? '' : resolveKey(provider, body.apiKey);
     // CLI 는 모델을 비우면 로그인한 계정의 기본 모델을 쓴다 (구독별로 쓸 수 있는 모델이 다르다)
     const model = (typeof body.model === 'string' && body.model.trim()) || (viaCli ? '' : getModel(provider, env));
@@ -143,11 +146,11 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
   async function cliStatus(force) {
     if (mock) {
       return Object.fromEntries(
-        PROVIDERS.map((p) => [p, { cmd: resolveCmd(p, env), installed: true, version: 'mock', install: '', login: '' }]),
+        CLI_PROVIDERS.map((p) => [p, { cmd: resolveCmd(p, env), installed: true, version: 'mock', install: '', login: '' }]),
       );
     }
     if (!force && cliCache.data && Date.now() - cliCache.at < 30_000) return cliCache.data;
-    const entries = await Promise.all(PROVIDERS.map(async (p) => [p, await detectCli(p, env)]));
+    const entries = await Promise.all(CLI_PROVIDERS.map(async (p) => [p, await detectCli(p, env)]));
     cliCache = { at: Date.now(), data: Object.fromEntries(entries) };
     return cliCache.data;
   }

@@ -53,7 +53,8 @@ function saveSettings() {
 }
 
 const cliInfo = (id) => serverCfg.cli?.[id];
-const authOf = (id) => settings.auth[id] || (cliInfo(id)?.installed ? 'cli' : 'api');
+const supportsCli = (id) => Boolean(serverCfg.cli?.[id]); // Gemini 는 CLI 로그인 종료로 API 키 전용
+const authOf = (id) => (!supportsCli(id) ? 'api' : settings.auth[id] || (cliInfo(id)?.installed ? 'cli' : 'api'));
 const hasKey = (id) =>
   authOf(id) === 'cli'
     ? Boolean(cliInfo(id)?.installed)
@@ -476,6 +477,7 @@ function renderSettings() {
     const sec = document.createElement('section');
     sec.className = 'provider';
     sec.dataset.auth = draftAuth[a.id];
+    sec.classList.toggle('api-only', !supportsCli(a.id));
     sec.style.setProperty('--agent', `var(--c-${a.id})`);
     sec.innerHTML = `
       <div class="provider-head">${svgUse('g-' + a.id)}${a.name}<small>${a.vendor}</small>
@@ -494,6 +496,7 @@ function renderSettings() {
       </div>
 
       <div class="only-api">
+        ${supportsCli(a.id) ? '' : `<p class="hint">Google 개인 계정의 Gemini CLI 로그인은 2026-06-18 에 종료되어 <b>API 키</b>만 지원합니다. 키는 Google AI Studio(aistudio.google.com/apikey)에서 발급합니다.</p>`}
         <label class="field"><span>API 키 <small>${serverKey ? '서버 .env 키 사용 가능' : ''}</small></span>
           <input type="password" data-key="${a.id}" placeholder="${serverKey ? '(비워 두면 서버 키 사용)' : a.keyHint}" autocomplete="off" spellcheck="false"></label>
         <label class="field"><span>모델</span>
@@ -562,7 +565,7 @@ async function loadModels(id, sec, btn) {
 
 function applyDraftToSettings() {
   for (const a of AGENTS) {
-    settings.auth[a.id] = draftAuth[a.id] || authOf(a.id);
+    settings.auth[a.id] = supportsCli(a.id) ? draftAuth[a.id] || authOf(a.id) : 'api';
     settings.keys[a.id] = document.querySelector(`[data-key="${a.id}"]`).value.trim();
     settings.models[a.id] = document.querySelector(`[data-model-api="${a.id}"]`).value.trim();
     settings.cliModels[a.id] = document.querySelector(`[data-model-cli="${a.id}"]`).value.trim();

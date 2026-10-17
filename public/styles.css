@@ -240,6 +240,7 @@ button { cursor: pointer; }
 .provider-head svg { width: 18px; height: 18px; color: var(--agent); }
 .provider-head small { font-weight: 500; font-size: 12px; color: var(--muted); }
 .provider-head .seg { margin-left: auto; }
+.provider.api-only .seg { display: none; }
 .seg.small button { padding: 4px 10px; font-size: 12px; }
 .provider[data-auth="cli"] .only-api, .provider[data-auth="api"] .only-cli { display: none; }
 .cli-status { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 13px; font-weight: 600; }

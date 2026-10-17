@@ -6,7 +6,7 @@ import { detectCli, streamCli } from '../lib/cli.js';
 import { createAppServer } from '../server.js';
 
 const fx = (n) => path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
-const ENV = { CLAUDE_CMD: fx('fake-claude.mjs'), CODEX_CMD: fx('fake-codex.mjs'), GEMINI_CMD: fx('fake-gemini.mjs') };
+const ENV = { CLAUDE_CMD: fx('fake-claude.mjs'), CODEX_CMD: fx('fake-codex.mjs') };
 const opts = { skip: process.platform === 'win32' && '가짜 CLI 는 shebang 실행이라 Windows 에서 건너뜀' };
 
 async function collect(gen) {
@@ -67,16 +67,6 @@ test('codex: 401 은 로그인 안내로 바뀐다', opts, async () => {
   await assert.rejects(ask('openai', 'FAIL'), (e) => /로그인이 필요합니다/.test(e.message) && /codex login/.test(e.message));
 });
 
-test('gemini: 시작 배너를 제거하고 본문만 스트리밍한다', opts, async () => {
-  const parts = await ask('gemini', '질문');
-  assert.equal(parts.join(''), '제미니:질문');
-  assert.ok(!parts.join('').includes('Loaded cached'));
-});
-
-test('gemini: 인증 안 됨(종료 코드 41)은 로그인 안내', opts, async () => {
-  await assert.rejects(ask('gemini', 'FAIL'), (e) => /로그인이 필요합니다/.test(e.message) && /Login with Google/.test(e.message));
-});
-
 test('설치되지 않은 명령은 설치/로그인 안내를 돌려준다', async () => {
   await assert.rejects(
     collect(streamCli({ provider: 'anthropic', prompt: 'x', env: { CLAUDE_CMD: '/nonexistent/claude-cmd' } })),
@@ -108,7 +98,7 @@ test('detectCli: 설치/버전 감지, 없는 명령은 installed=false', opts, 
   const ok = await detectCli('anthropic', ENV);
   assert.equal(ok.installed, true);
   assert.match(ok.version, /9\.9\.9/);
-  const bad = await detectCli('gemini', { GEMINI_CMD: '/nonexistent/gemini' });
+  const bad = await detectCli('openai', { CODEX_CMD: '/nonexistent/codex' });
   assert.equal(bad.installed, false);
 });
 
@@ -120,6 +110,7 @@ test('서버: auth=cli 로 /api/chat 이 CLI 를 거치고, /api/config 가 CLI 
     const cfg = await (await fetch(base + '/api/config')).json();
     assert.equal(cfg.cli.anthropic.installed, true);
     assert.equal(cfg.cli.openai.installed, true);
+    assert.equal(cfg.cli.gemini, undefined, 'Gemini 는 CLI 방식 미지원');
 
     // API 키가 없어도 CLI 방식은 통과해야 한다
     const res = await fetch(base + '/api/chat', {
@@ -132,14 +123,13 @@ test('서버: auth=cli 로 /api/chat 이 CLI 를 거치고, /api/config 가 CLI 
     assert.equal(events.at(-1).t, 'done');
     assert.equal(events.filter((e) => e.t === 'delta').map((e) => e.text).join(''), '응답:서버 경유');
 
-    const fail = await fetch(base + '/api/chat', {
+    const gem = await fetch(base + '/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider: 'gemini', auth: 'cli', prompt: 'FAIL' }),
+      body: JSON.stringify({ provider: 'gemini', auth: 'cli', prompt: 'x' }),
     });
-    const last = (await fail.text()).trim().split('\n').map((l) => JSON.parse(l)).at(-1);
-    assert.equal(last.t, 'error');
-    assert.match(last.message, /로그인이 필요합니다/);
+    assert.equal(gem.status, 400);
+    assert.match((await gem.json()).error, /CLI 로그인 방식을 지원하지 않습니다/);
   } finally {
     server.close();
   }
