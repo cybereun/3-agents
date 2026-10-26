@@ -4,10 +4,74 @@
   "description": "ChatGPT · Gemini · Claude 에게 동시에 묻고, 세 답변을 하나로 합의시키는 앱",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js --mock",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "desktop": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "electron-builder --win dir --x64 --publish never"
+  },
+  "productName": "3 Agents",
+  "author": "cybereun",
+  "homepage": "https://github.com/cybereun/3-agents",
+  "main": "desktop/main.js",
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.cybereun.three-agents",
+    "productName": "3 Agents",
+    "copyright": "cybereun",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**",
+      "lib/**",
+      "public/**",
+      "server.js",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "cybereun",
+        "repo": "3-agents",
+        "private": true
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "3 Agents",
+      "artifactName": "3-Agents-Setup-${version}.exe"
+    }
   }
 }

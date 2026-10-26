@@ -259,6 +259,8 @@ button { cursor: pointer; }
 .field input:focus, .field select:focus { border-color: var(--c-gemini); }
 .model-row { display: flex; gap: 8px; }
 .model-row input { flex: 1; }
+.ver { margin-right: auto; align-self: center; color: var(--muted); font-size: 12px; }
+.desktop-section .provider-head span { font-weight: 700; }
 .dlg-foot {
   position: sticky; bottom: -22px; display: flex; justify-content: flex-end; margin: 8px -22px -22px;
   padding: 12px 22px 22px; background: linear-gradient(transparent, var(--surface) 35%);

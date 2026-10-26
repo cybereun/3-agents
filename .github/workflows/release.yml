@@ -1,0 +1,93 @@
+name: release
+
+# package.json 의 version 을 올려서 push 하면 자동으로 설치 파일을 빌드하고 GitHub Release 로 올린다.
+# 같은 버전의 릴리스가 이미 있으면 아무것도 빌드하지 않는다.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      exists: ${{ steps.v.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: npm test
+      - name: Read version and check for an existing release
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION already exists - nothing to build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION not found - will build."
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.exists == 'false'
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Windows installer
+        run: npm run dist
+      - name: Smoke test the packaged app
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'smoke.txt'
+          $exe = (Resolve-Path 'dist\win-unpacked\3 Agents.exe').Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--smoke-test', "--smoke-out=$out" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'smoke test timed out' }
+          if (-not (Test-Path $out)) { throw 'smoke test produced no result' }
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { throw "smoke test failed (exit $($p.ExitCode))" }
+          if (-not (Select-String -Path $out -Pattern "version=$env:VERSION" -Quiet)) { throw 'version mismatch in smoke result' }
+      - name: Verify release assets
+        shell: bash
+        run: |
+          ls -la dist
+          test -f "dist/3-Agents-Setup-${VERSION}.exe"
+          test -f "dist/3-Agents-Setup-${VERSION}.exe.blockmap"
+          test -f dist/latest.yml
+          grep -q "version: ${VERSION}" dist/latest.yml
+          grep -q "3-Agents-Setup-${VERSION}.exe" dist/latest.yml
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" \
+            "dist/3-Agents-Setup-${VERSION}.exe" \
+            "dist/3-Agents-Setup-${VERSION}.exe.blockmap" \
+            "dist/latest.yml" \
+            --target "${GITHUB_SHA}" \
+            --title "3 Agents v${VERSION}" \
+            --generate-notes

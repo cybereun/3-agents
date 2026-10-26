@@ -717,6 +717,53 @@ function applySettingsFromDialog() {
   for (const a of AGENTS) if (cards[a.id]) cards[a.id].model.textContent = modelLabel(a.id);
 }
 
+/* ---------- 데스크탑 앱 (Electron 에서만 window.desktop 이 존재) ---------- */
+const UPDATE_TEXT = {
+  idle: '',
+  checking: '업데이트 확인 중…',
+  none: '최신 버전입니다.',
+  dev: '개발 모드에서는 업데이트를 확인하지 않습니다.',
+  'need-token': '자동 업데이트를 쓰려면 아래에 GitHub 토큰을 저장하세요.',
+  downloaded: '내려받기 완료 — 설치를 위해 앱이 곧 재시작됩니다.',
+};
+
+function describeUpdate(s) {
+  if (s.state === 'available') return `새 버전 ${s.version} 을(를) 발견했습니다.`;
+  if (s.state === 'downloading') return `업데이트를 내려받는 중… ${s.percent ?? 0}%`;
+  if (s.state === 'error') return `업데이트 확인 실패: ${s.message ?? ''}`;
+  return UPDATE_TEXT[s.state] ?? '';
+}
+
+async function setupDesktop() {
+  $('#appVersion').textContent = serverCfg.version ? `v${serverCfg.version}` : '';
+  if (!window.desktop) return; // 일반 브라우저에서는 이 섹션을 숨긴 채로 둔다
+  $('#desktopSection').hidden = false;
+  const status = $('#updateStatus');
+  const tokenInput = $('#ghToken');
+  const refresh = async () => {
+    const info = await window.desktop.getInfo();
+    if (!info) return;
+    $('#desktopVersion').textContent = `v${info.version}`;
+    $('#tokenState').textContent = info.hasToken ? '· 저장됨' : '· 없음';
+    $('#saveTokenBtn').disabled = !info.canStoreToken;
+    if (!info.canStoreToken) status.textContent = '이 PC에서는 토큰을 안전하게 저장할 수 없어 자동 업데이트를 쓸 수 없습니다.';
+  };
+  await refresh();
+  window.desktop.onUpdateStatus((s) => (status.textContent = describeUpdate(s)));
+  $('#checkUpdateBtn').addEventListener('click', () => window.desktop.checkForUpdates());
+  $('#saveTokenBtn').addEventListener('click', async () => {
+    const res = await window.desktop.setToken(tokenInput.value.trim());
+    tokenInput.value = ''; // 입력값은 즉시 지운다 (화면에 남기지 않음)
+    toast(res.ok ? '토큰을 저장했습니다' : res.message);
+    await refresh();
+  });
+  $('#clearTokenBtn').addEventListener('click', async () => {
+    await window.desktop.clearToken();
+    toast('토큰을 삭제했습니다');
+    await refresh();
+  });
+}
+
 /* ---------- 초기화 ---------- */
 async function init() {
   try {
@@ -725,6 +772,7 @@ async function init() {
     toast('서버에 연결할 수 없습니다');
   }
   $('#mockBadge').hidden = !serverCfg.mock;
+  setupDesktop();
   renderChips();
   renderMode();
   renderExamples();

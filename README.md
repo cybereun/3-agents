@@ -25,6 +25,35 @@ npm start       # → http://127.0.0.1:3000   (설치된 CLI는 자동 감지)
 - 테스트: `npm test`
 - 크롬/엣지에서 주소창의 **설치** 버튼을 누르면 독립 창 앱(PWA)으로 쓸 수 있습니다.
 
+## 설치형 데스크탑 앱 (Windows)
+
+### 설치 (다른 PC 포함)
+
+1. 브라우저에서 GitHub에 **로그인**한 뒤 이 저장소의 **Releases** → 최신 버전의 `3-Agents-Setup-x.y.z.exe` 를 내려받습니다. (저장소가 비공개라 로그인해야 보입니다)
+2. 실행하면 관리자 권한 없이 설치되고 바탕화면/시작 메뉴에 **3 Agents** 가 생깁니다. 서명되지 않은 파일이라 Windows SmartScreen 경고가 뜨면 **추가 정보 → 실행** 을 누르세요.
+3. **PC마다 CLI 설치와 로그인은 따로 필요합니다**: `npm i -g @anthropic-ai/claude-code @openai/codex` 후 `claude`(/login), `codex login`. Gemini 는 앱 설정에 API 키를 입력합니다. (Node.js 는 앱에 포함되어 있어 따로 설치하지 않아도 됩니다. CLI 설치용으로만 필요합니다.)
+
+### 자동 업데이트
+
+- 앱을 켜면 새 버전을 확인하고, 있으면 **업데이트 창**이 뜹니다. **[지금 업데이트]** 를 누르면 내려받기 → 설치 → 앱 재실행이 자동으로 진행됩니다. 설정(⚙)/설정 값(API 키, 모델 선택)은 그대로 유지됩니다.
+- 저장소가 비공개라서, **PC마다 읽기 전용 GitHub 토큰을 한 번** 저장해야 업데이트를 받을 수 있습니다.
+  1. GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token
+  2. Repository access: **Only select repositories → 3-agents**, Permissions: **Contents: Read-only** (이 권한만)
+  3. 앱의 설정(⚙) → **데스크탑 앱** → 토큰 붙여넣기 → 저장. 토큰은 Windows 보안 저장소(DPAPI)로 암호화되어 이 PC에만 저장되며 화면에서 다시 볼 수 없습니다.
+- 설정(⚙) → 데스크탑 앱 → **업데이트 확인** 으로 수동 확인할 수 있습니다. 로그: 메뉴 앱 → **로그 폴더 열기**.
+
+### 새 버전 배포 (개발자)
+
+```powershell
+npm version patch --no-git-tag-version   # 0.1.0 → 0.1.1  (minor/major 도 가능)
+git add -A; git commit -m "v0.1.1: 변경 내용"
+git push
+```
+
+push 하면 GitHub Actions(`release.yml`)가 테스트 → Windows 설치 파일 빌드 → **패키지 스모크 테스트** → GitHub Release 업로드까지 자동으로 합니다. 같은 버전의 릴리스가 이미 있으면 빌드하지 않으므로, **`package.json` 의 version 을 올리지 않으면 새 릴리스가 생기지 않고 앱도 업데이트를 인식하지 못합니다.**
+
+로컬에서 데스크탑 앱 실행/빌드: `npm install` → `npm run desktop` / `npm run dist`
+
 ## 모델 선택과 실제 모델 확인
 
 - 설정(⚙)에서 ChatGPT·Claude의 **모델을 드롭다운으로 고릅니다.** 기본값 "자동"은 로그인한 계정의 기본 모델을 씁니다.
@@ -136,6 +165,7 @@ CLI 호출(ChatGPT·Claude)은 안전하게 격리됩니다: 도구/MCP/플러�
 ```
 server.js            정적 파일 + /api/chat(NDJSON 스트림) /api/models /api/config
 lib/providers.js     OpenAI · Gemini · Anthropic API 스트리밍 어댑터, 모델 목록, 데모 모드
+desktop/             Electron 앱 (main.js, preload, 토큰 저장소) — 자동 업데이트
 lib/cli.js           claude · codex CLI 실행 어댑터 (격리, 파싱, 중단/타임아웃)
 public/              index.html · styles.css · app.js · markdown.js · summary.js · infographic.js · icons/
 scripts/make-icons   SVG → PNG 아이콘 생성 (개발용, playwright 필요)

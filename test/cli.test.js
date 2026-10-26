@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { detectCli, listCliModels, streamCli } from '../lib/cli.js';
+import { cliFailureMessage, detectCli, listCliModels, streamCli } from '../lib/cli.js';
 import { createAppServer } from '../server.js';
 
 const fx = (n) => path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
@@ -192,4 +192,13 @@ test('서버: /api/models(auth=cli) 와 /api/chat 의 meta 이벤트', opts, asy
   } finally {
     server.close();
   }
+});
+
+test('Windows cmd.exe 의 "명령 없음" 종료 코드(9009)는 언어와 무관하게 설치 안내로 바뀐다', () => {
+  // POSIX 종료 코드는 8비트라 Linux 에서 9009 를 흉내 낼 수 없어 판별 함수를 직접 검증한다.
+  // 한국어 Windows 는 stderr 가 깨져서 오므로 글자가 아니라 코드로 판별해야 한다.
+  const msg = cliFailureMessage('anthropic', 'claude', { code: 9009, stderr: '\ufffd\ufffd 깨진 메시지', parserError: '' });
+  assert.match(msg, /명령을 찾을 수 없습니다/);
+  assert.match(msg, /npm i -g @anthropic-ai\/claude-code/);
+  assert.doesNotMatch(cliFailureMessage('openai', 'codex', { code: 1, stderr: 'boom', parserError: '' }), /명령을 찾을 수 없습니다/);
 });

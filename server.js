@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync as readSync } from 'node:fs';
 import util from 'node:util';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +13,28 @@ import { PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY = 4 * 1024 * 1024;
+
+// 앱 버전 (package.json). 데스크탑 앱과 설정 화면이 같은 값을 보여준다.
+export const APP_VERSION = (() => {
+  try {
+    return JSON.parse(readSync(path.join(ROOT, 'package.json'), 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
+
+// 이 앱은 자기 자신(same-origin) 외에는 아무것도 불러오지 않는다
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 const MAX_PROMPT = 200_000;
 
 const MIME = {
@@ -168,6 +191,7 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
   async function handleConfig(res, refresh) {
     sendJson(res, 200, {
       mock,
+      version: APP_VERSION,
       cli: await cliStatus(refresh),
       providers: Object.fromEntries(
         PROVIDERS.map((p) => [p, { serverKey: Boolean(getServerKey(p, env)), model: getModel(p, env) }]),
@@ -189,6 +213,7 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
       'content-type': MIME[path.extname(file)] || 'application/octet-stream',
       'cache-control': 'no-cache',
       'x-content-type-options': 'nosniff',
+      'content-security-policy': CSP,
     });
     res.end(req.method === 'HEAD' ? undefined : data);
   }

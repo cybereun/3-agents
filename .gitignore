@@ -4,3 +4,4 @@ node_modules/
 server.log
 .server.pid
 .server.port
+dist/
