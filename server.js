@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
 import { CLI_PROVIDERS, detectCli, listCliModels, resolveCmd } from './lib/cli.js';
-import { PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
+import { CLI_ONLY, PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -115,6 +115,7 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
     if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new HttpError(400, '질문이 비어 있습니다.');
     if (body.prompt.length > MAX_PROMPT) throw new HttpError(413, '질문이 너무 깁니다.');
     const viaCli = body.auth === 'cli';
+    if (!viaCli && CLI_ONLY.includes(provider)) throw new HttpError(400, `${provider} 는 CLI 로그인 방식만 지원합니다.`);
     if (viaCli && !CLI_PROVIDERS.includes(provider)) {
       throw new HttpError(400, `${provider} 는 CLI 로그인 방식을 지원하지 않습니다. API 키를 사용하세요.`);
     }
@@ -143,6 +144,7 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
         system: typeof body.system === 'string' ? body.system : '',
         prompt: body.prompt,
         role: body.role,
+        effort: typeof body.effort === 'string' ? body.effort : '',
         signal: ac.signal,
         onMeta: (m) => {
           // 실제로 응답한 모델명을 화면에 알린다 (길이/형식 제한)

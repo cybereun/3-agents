@@ -34,6 +34,12 @@
           d="M12 2c.8 6 4 9.2 10 10-6 .8-9.2 4-10 10-.8-6-4-9.2-10-10 6-.8 9.2-4 10-10Z"
         />
       </symbol>
+      <symbol id="g-antigravity" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3.5 20 20H4Z" />
+          <path d="M8.6 14.5h6.8" />
+        </g>
+      </symbol>
       <symbol id="g-anthropic" viewBox="0 0 24 24">
         <g stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
           <path d="M12 3.5v17" />
@@ -70,7 +76,14 @@
         <label class="sr-only" for="question">질문</label>
         <textarea id="question" rows="3" placeholder="무엇이든 물어보세요. 배경, 제약, 원하는 답의 형태까지 적을수록 합의의 질이 올라갑니다." required></textarea>
         <div class="composer-bar">
-          <div id="agentChips" class="chips" role="group" aria-label="질문할 AI 선택"></div>
+          <div class="bar-left">
+            <label class="sr-only" for="comboSelect">AI 조합</label>
+            <select id="comboSelect" class="combo" title="세 번째 AI를 Gemini(API)와 Antigravity(CLI) 중에서 고릅니다">
+              <option value="gemini">ChatGPT + Gemini + Claude</option>
+              <option value="antigravity">ChatGPT + Antigravity + Claude</option>
+            </select>
+            <div id="agentChips" class="chips" role="group" aria-label="질문할 AI 선택"></div>
+          </div>
           <div class="composer-actions">
             <div class="seg" role="radiogroup" aria-label="합의 방식">
               <button type="button" role="radio" data-mode="fast" title="3개 답변 → 바로 종합 (호출 4회)">빠른 합의</button>
@@ -142,6 +155,25 @@
         <footer class="dlg-foot">
           <span id="appVersion" class="ver"></span>
           <button class="primary" value="save" id="saveSettings">저장</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="agyWarn" class="settings agy-warn">
+      <form method="dialog">
+        <header class="dlg-head"><h2>Antigravity 사용 전 확인</h2></header>
+        <div class="agy-warn-body">
+          <p>이 앱이 <b>Antigravity CLI(agy)</b>를 대신 실행해서 Google 계정으로 질의합니다.</p>
+          <ul>
+            <li><b>약관 위험:</b> Google <a href="https://antigravity.google/terms/" target="_blank" rel="noopener noreferrer">추가 약관</a>은 제3자 도구를 통한 접근을 제한하며, 자동화된 사용이 감지되면 Antigravity/Gemini CLI 계정이 정지될 수 있습니다. 개인 PC에서 본인 계정으로 쓰는 경우가 허용되는지는 <b>공식 확인이 없습니다.</b></li>
+            <li><b>이 앱이 하는 일:</b> agy 를 실행만 합니다. 로그인 토큰이나 자격 증명 파일은 읽지 않고, 파일·명령 도구를 쓰지 않도록 지시하며, 권한 확인을 건너뛰지 않습니다.</li>
+            <li><b>사용량:</b> Google AI 구독 한도에서 차감됩니다.</li>
+          </ul>
+          <p class="hint">중요한 계정이라면 사용하지 마세요. 언제든 조합을 Gemini(API)로 되돌릴 수 있습니다.</p>
+        </div>
+        <footer class="dlg-foot">
+          <button class="ghost" value="cancel">취소</button>
+          <button class="primary" value="ok">이해했습니다. 사용합니다</button>
         </footer>
       </form>
     </dialog>

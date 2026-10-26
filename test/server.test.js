@@ -22,7 +22,7 @@ async function ndjson(res) {
 test('GET /api/config 는 모크 여부와 제공자 정보를 돌려준다', async () => {
   const j = await (await fetch(base + '/api/config')).json();
   assert.equal(j.mock, true);
-  assert.deepEqual(Object.keys(j.providers).sort(), ['anthropic', 'gemini', 'openai']);
+  assert.deepEqual(Object.keys(j.providers).sort(), ['anthropic', 'antigravity', 'gemini', 'openai']);
   assert.equal(j.providers.openai.serverKey, false);
 });
 

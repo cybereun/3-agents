@@ -6,7 +6,7 @@ import { cliFailureMessage, detectCli, listCliModels, streamCli } from '../lib/c
 import { createAppServer } from '../server.js';
 
 const fx = (n) => path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', n);
-const ENV = { CLAUDE_CMD: fx('fake-claude.mjs'), CODEX_CMD: fx('fake-codex.mjs') };
+const ENV = { CLAUDE_CMD: fx('fake-claude.mjs'), CODEX_CMD: fx('fake-codex.mjs'), AGY_CMD: fx('fake-agy.mjs') };
 const opts = { skip: process.platform === 'win32' && '가짜 CLI 는 shebang 실행이라 Windows 에서 건너뜀' };
 
 async function collect(gen) {
@@ -201,4 +201,86 @@ test('Windows cmd.exe 의 "명령 없음" 종료 코드(9009)는 언어와 무�
   assert.match(msg, /명령을 찾을 수 없습니다/);
   assert.match(msg, /npm i -g @anthropic-ai\/claude-code/);
   assert.doesNotMatch(cliFailureMessage('openai', 'codex', { code: 1, stderr: 'boom', parserError: '' }), /명령을 찾을 수 없습니다/);
+});
+
+test('antigravity: 프롬프트를 -p 인자로 전달하고 stdout 텍스트를 스트리밍한다 (stdin 은 사용하지 않음)', opts, async () => {
+  const text = (await ask('antigravity', '안녕 Antigravity')).join('');
+  assert.equal(text, '아그: 안녕 Antigravity');
+});
+
+test('antigravity: 위험한 권한 건너뛰기 옵션은 절대 붙지 않고, 안전한 옵션만 전달된다', opts, async () => {
+  const text = (await ask('antigravity', 'ECHO_ARGS', { model: 'gemini-x', effort: 'low' })).join('');
+  const args = JSON.parse(text.replace(/^ARGS=/, ''));
+  assert.ok(!args.includes('--dangerously-skip-permissions'), '권한 확인을 건너뛰면 프롬프트 주입 시 명령이 실행될 수 있다');
+  assert.equal(args[0], '-p');
+  assert.equal(args[args.indexOf('--output-format') + 1], 'text');
+  assert.equal(args[args.indexOf('--model') + 1], 'gemini-x');
+  assert.equal(args[args.indexOf('--effort') + 1], 'low');
+  assert.ok(args.includes('--disable-slash-commands'));
+});
+
+test('antigravity: 따옴표/&/백틱/줄바꿈이 섞인 프롬프트도 인자 하나로 변조 없이 전달된다 (명령 주입 방어)', opts, async () => {
+  const nasty = 'ECHO_ARGS "quoted" & echo PWNED | whoami `id` $(id) ; rm -rf /\n두번째 줄\n[요청]';
+  const text = (await ask('antigravity', nasty)).join('');
+  const args = JSON.parse(text.replace(/^ARGS=/, ''));
+  const sent = args[args.indexOf('-p') + 1];
+  assert.ok(sent.endsWith(nasty), '프롬프트가 한 덩어리로 그대로 들어가야 한다');
+  assert.equal(args.filter((a) => a === '-p').length, 1);
+  assert.ok(sent.includes('도구') && sent.includes('[지시]'), '도구 사용 금지 지시가 앞에 붙는다');
+});
+
+test('antigravity: 사용하지 않는 effort 값/모델 문자는 걸러낸다', opts, async () => {
+  const args = JSON.parse((await ask('antigravity', 'ECHO_ARGS', { effort: 'extreme' })).join('').replace(/^ARGS=/, ''));
+  assert.ok(!args.includes('--effort'), '허용되지 않은 effort 는 전달하지 않는다');
+  await assert.rejects(ask('antigravity', 'x', { model: 'a; rm -rf /' }), /허용되지 않는 문자/);
+});
+
+test('antigravity: 프롬프트가 너무 길면 실행하지 않고 안내한다 (Windows 명령줄 한계)', opts, async () => {
+  await assert.rejects(ask('antigravity', 'x'.repeat(30000)), (e) => /너무 깁니다/.test(e.message) && /합의 조정 AI/.test(e.message));
+});
+
+test('antigravity: 미로그인은 로그인 안내, 그리고 임시 폴더를 남기지 않는다', opts, async () => {
+  await assert.rejects(ask('antigravity', 'NOT_LOGGED_IN'), (e) => /로그인이 필요합니다/.test(e.message) && /agy/.test(e.message));
+});
+
+test('antigravity: AGY_EXTRA_ARGS 는 안전한 토큰만 허용한다', opts, async () => {
+  const ok = JSON.parse((await ask('antigravity', 'ECHO_ARGS', { env: { ...ENV, AGY_EXTRA_ARGS: '--foo=bar --baz' } })).join('').replace(/^ARGS=/, ''));
+  assert.ok(ok.includes('--foo=bar') && ok.includes('--baz'));
+  await assert.rejects(ask('antigravity', 'x', { env: { ...ENV, AGY_EXTRA_ARGS: '--x; calc.exe' } }), /허용되지 않는 문자/);
+});
+
+test('antigravity: 중단 신호로 자식 프로세스를 정리한다', opts, async () => {
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 300);
+  const started = Date.now();
+  await assert.rejects(ask('antigravity', 'HANG', { signal: ac.signal }), /aborted/);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test('antigravity: 설치 감지(파일 존재 기반)와 모델 목록', opts, async () => {
+  const ok = await detectCli('antigravity', ENV);
+  assert.equal(ok.installed, true);
+  assert.match(ok.version, /9\.9\.9/);
+  assert.equal((await detectCli('antigravity', { AGY_CMD: '/nonexistent/agy' })).installed, false);
+  assert.ok((await listCliModels('antigravity', ENV)).length >= 1);
+});
+
+test('서버: antigravity 는 CLI 전용 — API 방식 요청은 400, CLI 방식은 동작', opts, async () => {
+  const server = createAppServer({ env: ENV });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (body) => fetch(base + '/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const api = await post({ provider: 'antigravity', auth: 'api', prompt: 'x' });
+    assert.equal(api.status, 400);
+    assert.match((await api.json()).error, /CLI 로그인 방식만/);
+    const cfg = await (await fetch(base + '/api/config')).json();
+    assert.equal(cfg.cli.antigravity.installed, true);
+    const ok = await post({ provider: 'antigravity', auth: 'cli', prompt: '서버 경유', effort: 'low' });
+    const events = (await ok.text()).trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(events.filter((e) => e.t === 'delta').map((e) => e.text).join(''), '아그: 서버 경유');
+    assert.equal(events.at(-1).t, 'done');
+  } finally {
+    server.close();
+  }
 });

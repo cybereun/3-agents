@@ -5,6 +5,8 @@ import { interpretConsensus, splitConsensus } from './summary.js';
 const AGENTS = [
   { id: 'openai', name: 'ChatGPT', vendor: 'OpenAI', letter: 'A', keyHint: 'sk-…' },
   { id: 'gemini', name: 'Gemini', vendor: 'Google', letter: 'B', keyHint: 'AIza…' },
+  // 세 번째 자리(B)는 Gemini(API) 또는 Antigravity(CLI) 중 조합 선택에 따라 하나만 쓰인다
+  { id: 'antigravity', name: 'Antigravity', vendor: 'Google', letter: 'B', cliOnly: true },
   { id: 'anthropic', name: 'Claude', vendor: 'Anthropic', letter: 'C', keyHint: 'sk-ant-…' },
 ];
 const BY_ID = Object.fromEntries(AGENTS.map((a) => [a.id, a]));
@@ -36,7 +38,10 @@ function loadSettings() {
     cliModels: {}, // CLI 방식 모델 (비우면 로그인한 계정의 기본 모델)
     lastModel: {}, // 제공자별로 실제 응답한 모델명 (마지막으로 확인된 값)
     auth: {}, // 제공자별 연결 방식: 'cli' | 'api' (미설정이면 CLI 설치 시 cli)
-    enabled: { openai: true, gemini: true, anthropic: true },
+    enabled: { openai: true, gemini: true, antigravity: true, anthropic: true },
+    combo: 'gemini', // 'gemini' | 'antigravity' — 세 번째 AI
+    agyAck: false, // Antigravity 약관 경고를 확인했는지
+    effort: {}, // Antigravity 추론 노력(low/medium/high), 비우면 agy 기본
     mode: 'fast',
     synth: 'anthropic',
   };
@@ -57,7 +62,13 @@ function saveSettings() {
 
 const cliInfo = (id) => serverCfg.cli?.[id];
 const supportsCli = (id) => Boolean(serverCfg.cli?.[id]); // Gemini 는 CLI 로그인 종료로 API 키 전용
-const authOf = (id) => (!supportsCli(id) ? 'api' : settings.auth[id] || (cliInfo(id)?.installed ? 'cli' : 'api'));
+const isCliOnly = (id) => Boolean(BY_ID[id]?.cliOnly);
+const authOf = (id) => (isCliOnly(id) ? 'cli' : !supportsCli(id) ? 'api' : settings.auth[id] || (cliInfo(id)?.installed ? 'cli' : 'api'));
+
+// 조합: ChatGPT + (Gemini | Antigravity) + Claude
+const slotB = () => (settings.combo === 'antigravity' ? 'antigravity' : 'gemini');
+const inCombo = (a) => a.id === 'openai' || a.id === 'anthropic' || a.id === slotB();
+const comboAgents = () => AGENTS.filter(inCombo);
 const hasKey = (id) =>
   authOf(id) === 'cli'
     ? Boolean(cliInfo(id)?.installed)
@@ -130,6 +141,7 @@ async function callAgent(provider, { system, prompt, role, signal, onText, onMod
       system,
       prompt,
       role,
+      effort: provider === 'antigravity' ? settings.effort.antigravity || '' : '',
     }),
   });
   if (!res.ok) {
@@ -290,7 +302,7 @@ function resetInfographic() {
 
 /* ---------- 실행 흐름 ---------- */
 function enabledAgents() {
-  return AGENTS.filter((a) => settings.enabled[a.id]);
+  return comboAgents().filter((a) => settings.enabled[a.id]);
 }
 
 async function ask(question) {
@@ -510,7 +522,7 @@ function finish(ctl) {
 function renderChips() {
   const wrap = $('#agentChips');
   wrap.replaceChildren();
-  for (const a of AGENTS) {
+  for (const a of comboAgents()) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'chip';
@@ -527,6 +539,36 @@ function renderChips() {
     });
     wrap.append(b);
   }
+}
+
+/** 조합(세 번째 AI) 적용. 합의 조정 AI 가 조합에서 빠지면 Claude 로 되돌린다 */
+function applyCombo(value) {
+  settings.combo = value === 'antigravity' ? 'antigravity' : 'gemini';
+  if (!comboAgents().some((a) => a.id === settings.synth)) settings.synth = 'anthropic';
+  saveSettings();
+  $('#comboSelect').value = settings.combo;
+  renderChips();
+}
+
+function setupCombo() {
+  const select = $('#comboSelect');
+  select.value = settings.combo;
+  const dlg = $('#agyWarn');
+  select.addEventListener('change', () => {
+    if (select.value === 'antigravity' && !settings.agyAck) {
+      select.value = settings.combo; // 확인 전에는 되돌려 둔다
+      dlg.showModal();
+      return;
+    }
+    applyCombo(select.value);
+  });
+  dlg.addEventListener('close', () => {
+    if (dlg.returnValue === 'ok') {
+      settings.agyAck = true;
+      applyCombo('antigravity');
+    }
+    dlg.returnValue = '';
+  });
 }
 
 function renderMode() {
@@ -571,7 +613,8 @@ function renderSettings() {
     const sec = document.createElement('section');
     sec.className = 'provider';
     sec.dataset.auth = draftAuth[a.id];
-    sec.classList.toggle('api-only', !supportsCli(a.id));
+    sec.classList.toggle('api-only', !supportsCli(a.id) && !isCliOnly(a.id));
+    sec.classList.toggle('cli-only', isCliOnly(a.id));
     sec.style.setProperty('--agent', `var(--c-${a.id})`);
     sec.innerHTML = `
       <div class="provider-head">${svgUse('g-' + a.id)}${a.name}<small>${a.vendor}</small>
@@ -589,10 +632,14 @@ function renderSettings() {
           <select data-model-select="${a.id}"><option value="">불러오는 중…</option></select>
           <input type="text" data-model-cli="${a.id}" hidden spellcheck="false" placeholder="모델 이름 직접 입력 (예: gpt-5.5)" style="margin-top:6px">
         </div>
+        ${a.id === 'antigravity' ? `
+        <label class="field"><span>추론 노력 <small>낮을수록 빠릅니다</small></span>
+          <select data-effort="antigravity"><option value="">자동 (agy 기본)</option><option value="low">낮음 (low)</option><option value="medium">중간 (medium)</option><option value="high">높음 (high)</option></select></label>
+        <p class="hint">조합 선택(입력창 위)에서 <b>ChatGPT + Antigravity + Claude</b>를 고르면 사용됩니다. Google 약관상 회색지대이니 처음 켤 때 안내를 확인하세요. 프롬프트가 길면(약 2만 4천 자 초과) 실행하지 않고 안내합니다.</p>` : ''}
       </div>
 
       <div class="only-api">
-        ${supportsCli(a.id) ? '' : `<p class="hint">Google 개인 계정의 Gemini CLI 로그인은 2026-06-18 에 종료되어 <b>API 키</b>만 지원합니다. 키는 Google AI Studio(aistudio.google.com/apikey)에서 발급합니다.</p>`}
+        ${supportsCli(a.id) || isCliOnly(a.id) ? '' : `<p class="hint">Google 개인 계정의 Gemini CLI 로그인은 2026-06-18 에 종료되어 <b>API 키</b>만 지원합니다. 키는 Google AI Studio(aistudio.google.com/apikey)에서 발급합니다.</p>`}
         <label class="field"><span>API 키 <small>${serverKey ? '서버 .env 키 사용 가능' : ''}</small></span>
           <input type="password" data-key="${a.id}" placeholder="${serverKey ? '(비워 두면 서버 키 사용)' : a.keyHint}" autocomplete="off" spellcheck="false"></label>
         <label class="field"><span>모델</span>
@@ -608,6 +655,8 @@ function renderSettings() {
     sec.querySelector('[data-model-api]').value = settings.models[a.id] || '';
     sec.querySelector('[data-model-cli]').value = settings.cliModels[a.id] || '';
     sec.querySelector('[data-last]').textContent = settings.lastModel[a.id] ? `최근 실제 응답: ${settings.lastModel[a.id]}` : '';
+    const effortSel = sec.querySelector('[data-effort]');
+    if (effortSel) effortSel.value = settings.effort[a.id] || '';
     if (supportsCli(a.id)) fillCliModelSelect(a.id, sec);
     for (const b of sec.querySelectorAll('[data-auth]')) {
       b.setAttribute('aria-checked', String(b.dataset.auth === draftAuth[a.id]));
@@ -634,8 +683,8 @@ function renderSettings() {
     wrap.append(sec);
   }
   const sel = $('#synthSelect');
-  sel.replaceChildren(...AGENTS.map((a) => new Option(`${a.name} (${a.vendor})`, a.id)));
-  sel.value = settings.synth;
+  sel.replaceChildren(...comboAgents().map((a) => new Option(`${a.name} (${a.vendor})`, a.id)));
+  sel.value = comboAgents().some((a) => a.id === settings.synth) ? settings.synth : 'anthropic';
 }
 
 const cliModelCache = {};
@@ -708,6 +757,8 @@ function applyDraftToSettings() {
     settings.cliModels[a.id] = document.querySelector(`[data-model-cli="${a.id}"]`).value.trim();
   }
   settings.synth = $('#synthSelect').value;
+  const effort = document.querySelector('[data-effort="antigravity"]');
+  if (effort) settings.effort.antigravity = effort.value;
 }
 
 function applySettingsFromDialog() {
@@ -753,6 +804,7 @@ async function init() {
   $('#mockBadge').hidden = !serverCfg.mock;
   setupDesktop();
   renderChips();
+  setupCombo();
   renderMode();
   renderExamples();
   renderSettings();

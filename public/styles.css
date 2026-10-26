@@ -9,6 +9,7 @@
   --c-openai: #10a37f;
   --c-gemini: #5b6cff;
   --c-anthropic: #e8794b;
+  --c-antigravity: #9b5de5;
   --logo-dot: #ffffff;
   --danger: #d4351c;
   --ok: #1a9d5c;
@@ -155,6 +156,7 @@ button { cursor: pointer; }
 .card[data-agent="openai"] { --agent: var(--c-openai); }
 .card[data-agent="gemini"] { --agent: var(--c-gemini); }
 .card[data-agent="anthropic"] { --agent: var(--c-anthropic); }
+.card[data-agent="antigravity"] { --agent: var(--c-antigravity); }
 .card::before { content: ""; height: 2px; background: var(--agent); opacity: .85; }
 .card-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 6px; }
 .card-icon {
@@ -241,6 +243,7 @@ button { cursor: pointer; }
 .provider-head small { font-weight: 500; font-size: 12px; color: var(--muted); }
 .provider-head .seg { margin-left: auto; }
 .provider.api-only .seg { display: none; }
+.provider.cli-only .seg, .provider.cli-only .only-api { display: none; }
 .seg.small button { padding: 4px 10px; font-size: 12px; }
 .provider[data-auth="cli"] .only-api, .provider[data-auth="api"] .only-cli { display: none; }
 .cli-status { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 13px; font-weight: 600; }
@@ -403,3 +406,18 @@ button { cursor: pointer; }
 /* 실제 응답 모델 표시 */
 .card-title small[data-actual] { color: var(--agent); font-weight: 600; }
 .field select option { font-family: var(--font); }
+
+/* 조합 선택 / Antigravity 경고 */
+.bar-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.combo {
+  padding: 6px 28px 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
+  font-size: 13px; font-weight: 650; color: var(--text); cursor: pointer; max-width: 100%;
+}
+.combo:hover { border-color: var(--muted); }
+.combo:focus-visible { outline: 2px solid var(--c-gemini); outline-offset: 2px; }
+.agy-warn { width: min(520px, calc(100vw - 24px)); }
+.agy-warn-body { font-size: 14px; }
+.agy-warn-body ul { margin: 8px 0; padding-left: 1.2em; display: grid; gap: 8px; }
+.agy-warn-body a { color: var(--c-gemini); }
+.agy-warn .dlg-foot { gap: 8px; }
+@media (max-width: 560px) { .bar-left { align-items: stretch; } .combo { width: 100%; } }
