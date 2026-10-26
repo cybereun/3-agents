@@ -1,57 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { createAppServer, APP_VERSION } from '../server.js';
-import { createTokenStore, isValidToken } from '../desktop/token-store.js';
-
-const GOOD = 'github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz_0123456789';
-
-// 실제 safeStorage 는 Electron 에서만 쓸 수 있으므로, 평문이 파일에 남지 않는지 보려고 가역 변환을 쓰는 가짜를 쓴다
-const fakeSafeStorage = (available = true) => ({
-  isAsyncEncryptionAvailable: async () => available,
-  encryptString: (s) => Buffer.from([...Buffer.from(s)].map((b) => b ^ 0x5a)),
-  decryptString: (buf) => Buffer.from([...buf].map((b) => b ^ 0x5a)).toString(),
-});
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), '3a-token-'));
-
-test('토큰 형식 검사: 토큰 문자만 허용하고 공백/따옴표/짧은 값은 거부', () => {
-  assert.ok(isValidToken(GOOD));
-  for (const bad of ['', 'short', `${GOOD} `, `"${GOOD}"`, 'a b'.repeat(10), `${GOOD}\n`, null, undefined, 42]) assert.ok(!isValidToken(bad), String(bad));
-});
-
-test('토큰 저장소: 암호화되어 저장되고(평문 없음) 다시 읽을 수 있다', async () => {
-  const dir = tmp();
-  const store = createTokenStore({ dir, safeStorage: fakeSafeStorage() });
-  assert.equal(store.has(), false);
-  await store.set(GOOD);
-  assert.equal(store.has(), true);
-  assert.equal(store.get(), GOOD);
-  const raw = fs.readFileSync(path.join(dir, 'update-token.bin'));
-  assert.ok(!raw.includes(Buffer.from(GOOD)), '파일에 토큰 평문이 있으면 안 된다');
-  store.clear();
-  assert.equal(store.has(), false);
-  assert.equal(store.get(), '');
-});
-
-test('토큰 저장소: 암호화를 쓸 수 없으면 평문으로라도 저장하지 않고 거부한다', async () => {
-  const dir = tmp();
-  const store = createTokenStore({ dir, safeStorage: fakeSafeStorage(false) });
-  await assert.rejects(store.set(GOOD), /안전하게 암호화/);
-  assert.equal(store.has(), false);
-  assert.equal(fs.readdirSync(dir).length, 0);
-});
-
-test('토큰 저장소: 잘못된 형식은 저장 전에 거부, 복호화 실패는 빈 문자열', async () => {
-  const dir = tmp();
-  const store = createTokenStore({ dir, safeStorage: fakeSafeStorage() });
-  await assert.rejects(store.set('bad token'), /형식/);
-  assert.equal(store.has(), false);
-  fs.writeFileSync(path.join(dir, 'update-token.bin'), 'x');
-  const broken = createTokenStore({ dir, safeStorage: { ...fakeSafeStorage(), decryptString: () => { throw new Error('fail'); } } });
-  assert.equal(broken.get(), '', '다른 PC에서 복사된 파일처럼 복호화할 수 없으면 빈 값');
-});
 
 test('서버: /api/config 에 앱 버전이 있고 package.json 과 같다, 정적 응답에 CSP 가 붙는다', async () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -68,4 +18,33 @@ test('서버: /api/config 에 앱 버전이 있고 package.json 과 같다, 정�
   } finally {
     server.close();
   }
+});
+
+test('업데이트 설정: 공개 저장소 방식(토큰/private 없음), 설치 파일 이름 규칙이 latest.yml 과 맞는다', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const [publish] = pkg.build.publish;
+  assert.deepEqual(publish, { provider: 'github', owner: 'cybereun', repo: '3-agents' });
+  assert.ok(!('private' in publish) && !('token' in publish), '공개 저장소이므로 private/token 설정이 없어야 한다');
+  assert.equal(pkg.build.nsis.artifactName, '3-Agents-Setup-${version}.exe', '워크플로의 업로드 파일명과 같아야 한다');
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+});
+
+test('릴리스 워크플로: main 푸시에서만, 한 번에 하나씩 실행한다', () => {
+  const yml = fs.readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  assert.match(yml, /branches: \[main\]/);
+  assert.match(yml, /concurrency:\s+group: release\s+cancel-in-progress: false/);
+  assert.ok(!yml.includes("'**'"), '모든 브랜치에서 릴리스하면 안 된다');
+});
+
+test('저작권 표기: LICENSE, package.json, README 에 일관되게 들어 있다', () => {
+  const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.license, 'UNLICENSED');
+  assert.match(pkg.build.copyright, /Copyright © 2026 cybereun/);
+  assert.match(read('LICENSE'), /Copyright \(c\) 2026 cybereun\. All rights reserved\./);
+  const readme = read('README.md');
+  assert.match(readme, /Copyright © 2026 cybereun\. All rights reserved\./);
+  assert.match(readme, /badge\/Developer-cybereun/);
+  assert.ok(!/@[\w.-]+\.(com|net|kr)/.test(readme), 'README 에 개인 이메일 주소를 넣지 않는다');
+  assert.ok(readme.includes(`v${pkg.version}`), '릴리스 히스토리에 현재 버전이 있어야 한다');
 });

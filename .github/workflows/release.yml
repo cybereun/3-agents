@@ -1,17 +1,18 @@
 name: release
 
-# package.json 의 version 을 올려서 push 하면 자동으로 설치 파일을 빌드하고 GitHub Release 로 올린다.
-# 같은 버전의 릴리스가 이미 있으면 아무것도 빌드하지 않는다.
+# main 에 push 했을 때 package.json 의 version 이 새로우면 설치 파일을 빌드하고 GitHub Release 로 올린다.
+# 같은 버전의 릴리스가 이미 있으면 아무것도 빌드하지 않는다 (version 을 올리지 않은 push 는 테스트만 실행).
 on:
   push:
-    branches: ['**']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# 동시에 두 번 실행되면 같은 버전을 두 번 만들려다 실패하므로 한 번에 하나씩만 실행한다
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -84,10 +85,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # release-notes/<버전>.md 가 있으면 그것을(업데이트 창에도 표시됨), 없으면 자동 생성 노트를 쓴다
+          if [ -f "release-notes/${VERSION}.md" ]; then NOTES=(--notes-file "release-notes/${VERSION}.md"); else NOTES=(--generate-notes); fi
           gh release create "v${VERSION}" \
             "dist/3-Agents-Setup-${VERSION}.exe" \
             "dist/3-Agents-Setup-${VERSION}.exe.blockmap" \
             "dist/latest.yml" \
             --target "${GITHUB_SHA}" \
             --title "3 Agents v${VERSION}" \
-            --generate-notes
+            "${NOTES[@]}"

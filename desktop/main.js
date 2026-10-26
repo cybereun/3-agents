@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron';
 import electronUpdater from 'electron-updater';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,14 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { killAllChildren } from '../lib/cli.js';
 import { loadEnvFile } from '../lib/env.js';
 import { createAppServer } from '../server.js';
-import { createTokenStore, isValidToken } from './token-store.js';
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 포트가 바뀌면 브라우저 저장소(설정/API 키)의 출처가 달라져 설정이 사라지므로 고정 포트를 쓴다
 const PREFERRED_PORT = 39217;
-const REPO = { owner: 'cybereun', repo: '3-agents' };
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 const SMOKE = process.argv.includes('--smoke-test');
@@ -26,7 +24,6 @@ app.setAppUserModelId('com.cybereun.three-agents');
 let win = null;
 let server = null;
 let origin = '';
-let store = null;
 let manualCheck = false;
 let downloading = false;
 let updateTimer = null;
@@ -107,6 +104,8 @@ app.on('web-contents-created', (_event, contents) => {
 });
 
 /* ---------- 업데이트 ---------- */
+// 저장소가 공개라서 토큰 없이 GitHub Releases 의 latest.yml 을 읽는다.
+// 어디서 받을지는 설치 파일에 들어 있는 app-update.yml(electron-builder 가 생성)이 정한다.
 const push = (status) => {
   if (win && !win.isDestroyed()) win.webContents.send('desktop:update-status', status);
 };
@@ -114,11 +113,6 @@ const push = (status) => {
 function plainNotes(notes) {
   const raw = Array.isArray(notes) ? notes.map((n) => n.note ?? '').join('\n') : String(notes ?? '');
   return raw.replace(/<[^>]*>/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 600);
-}
-
-function configureFeed() {
-  const token = store.get();
-  autoUpdater.setFeedURL({ provider: 'github', ...REPO, private: true, token: token || undefined });
 }
 
 function installAndRestart() {
@@ -181,7 +175,7 @@ function setupUpdater() {
     const message = String(err?.message ?? err).split('\n')[0].slice(0, 300);
     push({ state: 'error', message });
     if (manualCheck || downloading) {
-      dialog.showErrorBox('업데이트 실패', `${message}\n\n토큰이 만료되었거나 권한(Contents: Read-only)이 없는지 확인하세요. 설정(⚙) → 데스크탑 앱에서 다시 저장할 수 있습니다.`);
+      dialog.showErrorBox('업데이트 실패', `${message}\n\n인터넷 연결을 확인하고 잠시 뒤 다시 시도하세요. 계속 실패하면 GitHub Releases 에서 최신 설치 파일을 직접 받아 설치할 수 있습니다.`);
     }
     downloading = false;
   });
@@ -194,12 +188,6 @@ async function checkForUpdates({ manual }) {
     if (manual) dialog.showMessageBox(win ?? undefined, { type: 'info', title: '3 Agents', message: '개발 모드에서는 업데이트를 확인하지 않습니다.', buttons: ['확인'] });
     return;
   }
-  if (!store.has()) {
-    push({ state: 'need-token' });
-    if (manual) await askForToken();
-    return;
-  }
-  configureFeed();
   try {
     await autoUpdater.checkForUpdates();
   } catch {
@@ -207,31 +195,8 @@ async function checkForUpdates({ manual }) {
   }
 }
 
-/** 처음 한 번, 또는 수동 확인 시: 업데이트를 받으려면 토큰이 필요하다고 안내한다 */
-async function askForToken() {
-  const { response } = await dialog.showMessageBox(win ?? undefined, {
-    type: 'info',
-    title: '자동 업데이트 설정',
-    message: '자동 업데이트를 쓰려면 GitHub 토큰(읽기 전용)이 필요합니다.',
-    detail: '이 앱의 저장소는 비공개라서, 업데이트를 확인하려면 이 PC에 토큰을 한 번 저장해야 합니다.\n\n설정(⚙) → 데스크탑 앱에서 토큰을 입력하세요. 토큰은 Windows 보안 저장소(DPAPI)로 암호화되어 이 PC에만 저장됩니다.',
-    buttons: ['설정 열기', '나중에'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
-  if (response === 0) win?.webContents.executeJavaScript("document.querySelector('#settingsBtn')?.click()").catch(() => {});
-}
-
 function scheduleUpdateChecks() {
-  setTimeout(async () => {
-    const flag = path.join(app.getPath('userData'), 'token-notice-shown');
-    if (!store.has() && !fs.existsSync(flag)) {
-      fs.writeFileSync(flag, '1');
-      await askForToken(); // 토큰이 없는 PC 에는 처음 한 번만 안내
-      return;
-    }
-    checkForUpdates({ manual: false });
-  }, 5000);
+  setTimeout(() => checkForUpdates({ manual: false }), 5000);
   updateTimer = setInterval(() => checkForUpdates({ manual: false }), UPDATE_CHECK_INTERVAL_MS);
 }
 
@@ -241,26 +206,7 @@ function trusted(event) {
 }
 
 function setupIpc() {
-  ipcMain.handle('desktop:info', async (e) => {
-    if (!trusted(e)) return null;
-    return { version: app.getVersion(), packaged: app.isPackaged, hasToken: store.has(), canStoreToken: await store.available() };
-  });
-  ipcMain.handle('desktop:set-token', async (e, token) => {
-    if (!trusted(e)) return { ok: false, message: '허용되지 않은 요청입니다.' };
-    try {
-      if (!isValidToken(token)) throw new Error('토큰 형식이 올바르지 않습니다. 공백 없이 토큰 문자열만 붙여넣으세요.');
-      await store.set(token);
-      configureFeed();
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, message: err.message };
-    }
-  });
-  ipcMain.handle('desktop:clear-token', (e) => {
-    if (!trusted(e)) return { ok: false };
-    store.clear();
-    return { ok: true };
-  });
+  ipcMain.handle('desktop:info', (e) => (trusted(e) ? { version: app.getVersion(), packaged: app.isPackaged } : null));
   ipcMain.handle('desktop:check-update', (e) => {
     if (!trusted(e)) return { ok: false };
     checkForUpdates({ manual: true });
@@ -312,6 +258,12 @@ async function runSmokeTest(port) {
   }
 }
 
+/** 0.1.x 에서 저장하던 업데이트 토큰은 더 이상 필요 없다 (저장소가 공개됨) — 남아 있으면 지운다 */
+function removeLegacyTokenFiles() {
+  const dir = app.getPath('userData');
+  for (const name of ['update-token.bin', 'token-notice-shown']) fs.rmSync(path.join(dir, name), { force: true });
+}
+
 /* ---------- 시작/종료 ---------- */
 if (!SMOKE && !app.requestSingleInstanceLock()) {
   app.quit();
@@ -325,7 +277,7 @@ if (!SMOKE && !app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-    store = createTokenStore({ dir: app.getPath('userData'), safeStorage });
+    removeLegacyTokenFiles();
     setupIpc();
     buildMenu();
     const { port, fallback } = await startServer();

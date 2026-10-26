@@ -1,0 +1,32 @@
+Copyright (c) 2026 cybereun. All rights reserved.
+
+3 Agents (the "Software"), including its source code, design, icons and
+installer, is proprietary software owned by cybereun.
+
+Permission is granted to download, install and run the Software for
+personal use only. Without the prior written permission of the copyright
+holder you may NOT:
+
+  - copy, modify, merge, or create derivative works of the Software;
+  - distribute, sublicense, sell, rent or otherwise make the Software
+    available to third parties;
+  - use the Software for commercial purposes;
+  - remove or alter this copyright notice.
+
+The source code is visible on GitHub for transparency only; viewing it does
+not grant any license.
+
+Third-party components (for example Electron, Chromium and npm packages)
+are included under their own licenses. See LICENSE.electron.txt and
+LICENSES.chromium.html in the installation folder, and the package metadata
+of each dependency.
+
+"ChatGPT"/"OpenAI", "Claude"/"Anthropic" and "Gemini"/"Google" are trademarks
+of their respective owners. This Software is an unofficial tool and is not
+affiliated with, endorsed by, or sponsored by those companies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM THE USE OF THE SOFTWARE.
