@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   getInfo: () => ipcRenderer.invoke('desktop:info'),
   checkForUpdates: () => ipcRenderer.invoke('desktop:check-update'),
+  pickFolder: () => ipcRenderer.invoke('desktop:pick-folder'),
   onUpdateStatus: (callback) => {
     const handler = (_event, status) => callback(status);
     ipcRenderer.on('desktop:update-status', handler);

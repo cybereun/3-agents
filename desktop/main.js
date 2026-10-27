@@ -43,6 +43,8 @@ function log(...args) {
 
 /* ---------- 서버 ---------- */
 async function startServer() {
+  // 기록 설정(저장 폴더 등)은 설치 폴더가 아니라 사용자 데이터 폴더에 둔다 → 업데이트해도 유지된다
+  process.env.APP_DATA_DIR = app.getPath('userData');
   loadEnvFile(path.join(app.getPath('userData'), '.env')); // 선택: API 키/CLI 경로 등을 .env 로 지정
   server = createAppServer({ host: '127.0.0.1' });
   const listen = (port) =>
@@ -88,18 +90,21 @@ function createWindow(port) {
 }
 
 const isHttp = (url) => /^https?:\/\//i.test(url);
+// 기록 화면의 "옵시디언에서 열기" 링크. 노트를 여는 주소(obsidian://open?...)만 허용한다
+const isObsidianOpen = (url) => /^obsidian:\/\/open\?/i.test(url) && url.length < 4096;
+const openExternalSafe = (url) => (isHttp(url) || isObsidianOpen(url) ? shell.openExternal(url) : undefined);
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (e) => e.preventDefault());
   // 모델 응답의 링크(target=_blank)는 앱 안이 아니라 기본 브라우저로 연다
   contents.setWindowOpenHandler(({ url }) => {
-    if (isHttp(url)) shell.openExternal(url);
+    openExternalSafe(url);
     return { action: 'deny' };
   });
   contents.on('will-navigate', (e, url) => {
     if (origin && url.startsWith(origin)) return;
     e.preventDefault();
-    if (isHttp(url)) shell.openExternal(url);
+    openExternalSafe(url);
   });
 });
 
@@ -207,6 +212,15 @@ function trusted(event) {
 
 function setupIpc() {
   ipcMain.handle('desktop:info', (e) => (trusted(e) ? { version: app.getVersion(), packaged: app.isPackaged } : null));
+  // 기록 저장 폴더를 탐색기 창으로 고른다 (경로 문자열은 이후 서버가 검증한다)
+  ipcMain.handle('desktop:pick-folder', async (e) => {
+    if (!trusted(e)) return { canceled: true };
+    const r = await dialog.showOpenDialog(win ?? undefined, {
+      title: '기록을 저장할 폴더 선택 (예: 옵시디언 볼트 안의 폴더)',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return r.canceled || !r.filePaths[0] ? { canceled: true } : { path: r.filePaths[0] };
+  });
   ipcMain.handle('desktop:check-update', (e) => {
     if (!trusted(e)) return { ok: false };
     checkForUpdates({ manual: true });

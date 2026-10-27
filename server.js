@@ -7,6 +7,7 @@ import util from 'node:util';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from './lib/env.js';
+import { HistoryError, HistoryStore } from './lib/history.js';
 import { CLI_PROVIDERS, detectCli, listCliModels, resolveCmd } from './lib/cli.js';
 import { CLI_ONLY, PROVIDERS, getModel, getServerKey, listModels, streamChat } from './lib/providers.js';
 
@@ -79,6 +80,8 @@ async function readJson(req) {
 export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) {
   const mock = env.MOCK === '1';
   const loopbackOnly = LOOPBACK.has(host);
+  // 기록 설정(저장 폴더 등)의 보관 위치. 데스크탑 앱은 사용자 데이터 폴더(APP_DATA_DIR)를 쓴다
+  const history = new HistoryStore({ dataDir: env.APP_DATA_DIR || path.join(ROOT, 'data') });
 
   /** 다른 웹사이트가 내 로컬 서버를 두드려 키를 소모시키는 것(CSRF/DNS rebinding)을 차단 */
   function guard(req) {
@@ -220,12 +223,70 @@ export function createAppServer({ env = process.env, host = '127.0.0.1' } = {}) 
     res.end(req.method === 'HEAD' ? undefined : data);
   }
 
+  const historyInfo = async () => {
+    const cfg = await history.config();
+    return { dir: cfg.dir, enabled: cfg.enabled, count: await history.count() };
+  };
+
+  async function handleHistory(req, res, pathname, searchParams) {
+    const rel = pathname.slice('/api/history'.length); // '' | '/config' | '/clear' | '/<id>'
+    try {
+      if (rel === '/config') {
+        if (req.method === 'GET') return sendJson(res, 200, await historyInfo());
+        if (req.method === 'POST') {
+          const b = await readJson(req);
+          await history.setConfig({ dir: b.dir, enabled: b.enabled });
+          return sendJson(res, 200, await historyInfo());
+        }
+      } else if (rel === '/clear') {
+        if (req.method === 'POST') {
+          const b = await readJson(req);
+          if (b.confirm !== true) throw new HttpError(400, '확인이 필요합니다.');
+          return sendJson(res, 200, await history.clear());
+        }
+      } else if (rel === '') {
+        if (req.method === 'GET') {
+          const entries = (await history.list({ q: searchParams.get('q') || '' })).map((m) => ({
+            id: m.id,
+            date: m.date,
+            question: m.question,
+            mode: m.mode,
+            combo: m.combo,
+            status: m.status,
+            conclusion: m.conclusion,
+            confidence: m.confidence,
+            file: m.file,
+          }));
+          return sendJson(res, 200, { entries });
+        }
+        if (req.method === 'POST') {
+          const b = await readJson(req);
+          return sendJson(res, 200, await history.save(b.entry, typeof b.id === 'string' ? b.id : undefined));
+        }
+      } else if (rel.startsWith('/')) {
+        let id;
+        try {
+          id = decodeURIComponent(rel.slice(1));
+        } catch {
+          throw new HttpError(400, '잘못된 기록 번호입니다.');
+        }
+        if (req.method === 'GET') return sendJson(res, 200, await history.get(id));
+        if (req.method === 'DELETE') return sendJson(res, 200, await history.remove(id));
+      }
+    } catch (err) {
+      if (err instanceof HistoryError) throw new HttpError(400, err.message);
+      throw err;
+    }
+    throw new HttpError(405, 'Method not allowed');
+  }
+
   return http.createServer(async (req, res) => {
     try {
       guard(req);
       const { pathname, searchParams } = new URL(req.url, 'http://localhost');
       if (pathname.startsWith('/api/')) {
         if (pathname === '/api/config' && req.method === 'GET') return await handleConfig(res, searchParams.has('refresh'));
+        if (pathname === '/api/history' || pathname.startsWith('/api/history/')) return await handleHistory(req, res, pathname, searchParams);
         if (req.method !== 'POST') throw new HttpError(405, 'Method not allowed');
         if (pathname === '/api/chat') return await handleChat(req, res);
         if (pathname === '/api/models') return await handleModels(req, res);

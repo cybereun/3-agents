@@ -205,6 +205,7 @@ function buildCard(agent) {
     model: el.querySelector('small'),
     text: '',
     revised: '',
+    errorText: '',
     started: 0,
   };
   api.renderMain = makeRenderer(api.mainEl);
@@ -220,6 +221,7 @@ function setStatus(card, state, label) {
 }
 
 function showError(card, target, message) {
+  if (target !== 'rev') card.errorText = message; // 기록에 함께 저장한다
   const el = target === 'rev' ? card.revEl : card.mainEl;
   el.innerHTML = '';
   const p = document.createElement('p');
@@ -305,9 +307,24 @@ function enabledAgents() {
   return comboAgents().filter((a) => settings.enabled[a.id]);
 }
 
+let currentSession = null; // 가장 최근 질문의 저장용 스냅샷 (합의 재시도 시 같은 노트를 갱신한다)
+
+/** 질문 하나를 실행하고, 끝나면(성공/중지/오류 모두) 기록으로 저장한다 */
 async function ask(question) {
+  const session = { question, startedAt: new Date().toISOString(), mode: settings.mode, agents: null, cards: {}, round: null, savedId: null };
+  try {
+    await runAsk(question, session);
+  } finally {
+    await persistRun(session);
+  }
+}
+
+async function runAsk(question, session) {
   const agents = enabledAgents();
   if (agents.length < 2) return toast('AI를 2개 이상 선택하세요');
+  session.agents = agents;
+  currentSession = session;
+  hideHistoryBanner();
 
   run?.abort.abort();
   const ctl = new AbortController();
@@ -319,6 +336,7 @@ async function ask(question) {
   grid.replaceChildren();
   for (const a of agents) {
     cards[a.id] = buildCard(a);
+    session.cards[a.id] = cards[a.id]; // 새 질문이 cards 를 바꿔도 이 실행의 카드를 계속 참조한다
     grid.append(cards[a.id].el);
   }
   $('#tabs').hidden = false;
@@ -417,15 +435,18 @@ async function ask(question) {
     debated,
     answers: ok.map((a) => ({ ...a, text: cards[a.id].revised || cards[a.id].text })),
   };
+  session.round = lastRound;
   await runConsensus(ctl);
   finish(ctl);
 }
 
 async function runConsensus(ctl) {
-  const { question, debated, answers } = lastRound;
+  const round = lastRound; // 새 질문이 lastRound 를 바꿔도 이 합의의 결과가 섞이지 않게 지역 변수로 잡는다
+  const { question, debated, answers } = round;
   const ids = answers.map((a) => a.id);
   const synthId = ids.includes(settings.synth) && hasKey(settings.synth) ? settings.synth : ids.find(hasKey) || ids[0];
   const synth = BY_ID[synthId];
+  round.by = { id: synthId, name: synth.name, model: '' };
   let synthModel = '';
   const showMeta = () => {
     const who = synthModel ? `${synth.name}(${synthModel})` : synth.name;
@@ -433,8 +454,8 @@ async function runConsensus(ctl) {
   };
   showMeta();
   $('#retryConsensus').hidden = true;
-  lastRound.result = '';
-  lastRound.summary = null;
+  round.result = '';
+  round.summary = null;
   resetInfographic();
   setTabState('consensus', 'run');
   setConsensus('placeholder', '합의안을 작성하는 중…');
@@ -449,6 +470,7 @@ async function runConsensus(ctl) {
       signal: ctl.signal,
       onModel: (m) => {
         synthModel = m;
+        round.by.model = m;
         rememberModel(synthId, m);
         showMeta();
       },
@@ -459,8 +481,8 @@ async function runConsensus(ctl) {
     });
     const { markdown, summary } = interpretConsensus(text);
     render.flush(markdown);
-    lastRound.result = markdown;
-    lastRound.summary = summary;
+    round.result = markdown;
+    round.summary = summary;
     renderInfographic($('#infographic'), summary, { legend: $('#legend').textContent, meta: $('#consensusMeta').textContent });
     $('#tab-infographic').disabled = false;
     setTabState('consensus', 'done');
@@ -476,6 +498,333 @@ async function runConsensus(ctl) {
   } finally {
     body.classList.remove('streaming');
   }
+}
+
+/* ---------- 기록 (저장 · 열람) ---------- */
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtDate = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+const obsidianUrl = (file) => `obsidian://open?path=${encodeURIComponent(file)}`; // 볼트에 등록된 노트면 옵시디언이 바로 연다
+const baseName = (p) => String(p).split(/[\\/]/).pop();
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+  return j;
+}
+const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+/** 실행 스냅샷 → 저장할 기록. 답이 하나도 없으면 null */
+function buildEntry(session) {
+  const agents = session.agents
+    .filter((a) => session.cards[a.id])
+    .map((a) => {
+      const c = session.cards[a.id];
+      return {
+        id: a.id,
+        name: a.name,
+        letter: a.letter,
+        model: c.model.dataset.actual ? c.model.textContent : modelOf(a.id),
+        text: c.text || '',
+        revised: c.revised || '',
+        error: c.text ? '' : c.errorText || '',
+      };
+    });
+  if (!agents.some((a) => a.text)) return null;
+  const round = session.round;
+  return {
+    question: session.question,
+    mode: session.mode,
+    createdAt: session.startedAt,
+    agents,
+    consensus: round?.result ? { by: round.by, markdown: round.result, summary: round.summary } : null,
+  };
+}
+
+async function persistRun(session) {
+  if (!session?.agents) return;
+  const entry = buildEntry(session); // await 전에 동기적으로 만든다 (그 사이 화면이 바뀌어도 이 실행의 값)
+  if (!entry) return;
+  try {
+    const res = await post('/api/history', { entry, id: session.savedId || undefined });
+    if (res.skipped) return;
+    session.savedId = res.id;
+    toast(`기록에 저장했습니다 · ${baseName(res.file)}`);
+  } catch (err) {
+    toast(`기록 저장 실패: ${err.message}`.slice(0, 140));
+  }
+}
+
+function hideHistoryBanner() {
+  $('#historyBanner').hidden = true;
+}
+
+/** 결과 영역(탭, 카드, 합의, 인포그래픽)을 비운다. 입력창은 건드리지 않는다 */
+function clearResults() {
+  for (const sel of ['#grid', '#consensus', '#infographic']) $(sel).hidden = true;
+  $('#grid').replaceChildren();
+  $('#infographic').replaceChildren();
+  $('#consensusBody').replaceChildren();
+  $('#consensusMeta').textContent = '';
+  $('#legend').textContent = '';
+  $('#tabs').hidden = true;
+  for (const t of ['answers', 'consensus', 'infographic']) setTabState(t, 'idle');
+  $('#tab-infographic').disabled = true;
+  $('#retryConsensus').hidden = true;
+  for (const k of Object.keys(cards)) delete cards[k];
+  lastRound = null;
+  currentSession = null;
+  hideHistoryBanner();
+}
+
+/** 진행 중이면 사용자 확인을 받고 중지한다. 계속해도 되면 true */
+function stopRunIfAny(message) {
+  if (!run) return true;
+  if (!confirm(message)) return false;
+  const ctl = run.abort;
+  ctl.abort();
+  finish(ctl);
+  return true;
+}
+
+function resetAll() {
+  if (!stopRunIfAny('진행 중인 질문을 중지하고 초기화할까요?\n(지금까지의 답변은 기록에 저장됩니다)')) return;
+  clearResults();
+  const ta = $('#question');
+  ta.value = '';
+  autosize();
+  $('#examples').hidden = false;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  ta.focus();
+}
+
+/** 저장된 기록을 화면에 복원한다 (탭 3개 그대로) */
+function restoreEntry(entry, file) {
+  if (!stopRunIfAny('진행 중인 질문이 있습니다. 중지하고 기록을 열까요?')) return false;
+  clearResults();
+  const grid = $('#grid');
+  for (const a of entry.agents) {
+    const base = BY_ID[a.id];
+    if (!base) continue;
+    const c = buildCard({ ...base, name: a.name || base.name, letter: a.letter || base.letter });
+    cards[a.id] = c;
+    c.model.textContent = a.model || '';
+    if (a.model) {
+      c.model.dataset.actual = '1';
+      c.model.title = '실제로 응답한 모델';
+    }
+    c.text = a.text;
+    c.revised = a.revised;
+    if (a.text) {
+      c.renderMain.flush(a.text);
+      setStatus(c, 'done', '저장됨');
+      c.copyBtn.hidden = false;
+    } else {
+      setStatus(c, 'err', '오류');
+      showError(c, 'main', a.error || '답변이 없습니다.');
+    }
+    if (a.revised) {
+      c.revWrap.hidden = false;
+      c.renderRev.flush(a.revised);
+    }
+    grid.append(c.el);
+  }
+  $('#legend').textContent = entry.agents.map((a) => `${a.letter} = ${a.name}`).join('  ·  ');
+  const cons = entry.consensus;
+  if (cons) {
+    const body = $('#consensusBody');
+    body.className = 'md';
+    body.innerHTML = renderMarkdown(cons.markdown); // renderMarkdown 은 모든 텍스트를 먼저 이스케이프한다
+    $('#consensusMeta').textContent = `${cons.by.name}${cons.by.model ? `(${cons.by.model})` : ''}가 ${entry.agents.length}개 답변을 종합 · ${entry.mode === 'debate' ? '토론 합의' : '빠른 합의'}`;
+    setTabState('consensus', 'done');
+    if (cons.summary) {
+      renderInfographic($('#infographic'), cons.summary, { legend: $('#legend').textContent, meta: $('#consensusMeta').textContent });
+      $('#tab-infographic').disabled = false;
+      setTabState('infographic', 'done');
+    }
+    lastRound = { result: cons.markdown, summary: cons.summary };
+  } else {
+    setConsensus('placeholder', '이 기록에는 합의 답변이 없습니다. (합의 전에 중지되었거나 실패한 질문입니다)');
+  }
+  setTabState('answers', 'done');
+  $('#tabs').hidden = false;
+  showTab(cons ? 'consensus' : 'answers');
+  const ta = $('#question');
+  ta.value = entry.question;
+  autosize();
+  $('#examples').hidden = true;
+  $('#historyBannerText').textContent = `저장된 기록 · ${fmtDate(entry.createdAt)}${entry.status === 'partial' ? ' · 미완료' : ''} — 다시 질문하려면 [물어보기]를 누르세요.`;
+  const link = $('#historyBannerLink');
+  link.href = obsidianUrl(file);
+  link.hidden = false;
+  $('#historyBanner').hidden = false;
+  $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return true;
+}
+
+let historyReq = 0;
+async function loadHistoryList(q = '') {
+  const my = ++historyReq;
+  const list = $('#historyList');
+  const empty = $('#historyEmpty');
+  try {
+    const [{ entries }, cfg] = await Promise.all([api(`/api/history?q=${encodeURIComponent(q)}`), api('/api/history/config')]);
+    if (my !== historyReq) return; // 더 최신 검색이 있다
+    $('#historyTotal').textContent = q ? `검색 결과 ${entries.length}개` : `${entries.length}개`;
+    $('#historyWhere').textContent = `저장 폴더: ${cfg.dir}${cfg.enabled ? '' : ' (저장 꺼짐)'}`;
+    list.replaceChildren(
+      ...entries.map((m) => {
+        const li = document.createElement('li');
+        li.className = 'h-item';
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'h-open';
+        const qEl = document.createElement('span');
+        qEl.className = 'h-q';
+        qEl.textContent = m.question || '(제목 없음)';
+        const meta = document.createElement('span');
+        meta.className = 'h-meta';
+        meta.textContent = [fmtDate(m.date), m.combo, m.mode, m.confidence ? `신뢰도 ${m.confidence}` : ''].filter(Boolean).join(' · ');
+        if (m.status === 'partial') {
+          const badge = document.createElement('span');
+          badge.className = 'h-badge';
+          badge.textContent = '미완료';
+          meta.append(badge);
+        }
+        open.append(qEl, meta);
+        if (m.conclusion) {
+          const c = document.createElement('span');
+          c.className = 'h-concl';
+          c.textContent = m.conclusion;
+          open.append(c);
+        }
+        open.addEventListener('click', async () => {
+          try {
+            const { entry, file } = await api(`/api/history/${encodeURIComponent(m.id)}`);
+            if (restoreEntry(entry, file)) $('#historyDlg').close();
+          } catch (err) {
+            toast(err.message.slice(0, 140));
+          }
+        });
+        const side = document.createElement('div');
+        side.className = 'h-side';
+        const obs = document.createElement('a');
+        obs.href = obsidianUrl(m.file);
+        obs.target = '_blank';
+        obs.rel = 'noopener noreferrer';
+        obs.textContent = '옵시디언';
+        obs.title = '옵시디언에서 이 노트 열기';
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'h-del';
+        del.textContent = '삭제';
+        del.addEventListener('click', async () => {
+          if (!confirm(`이 기록을 삭제할까요?\n\n"${(m.question || '').slice(0, 60)}"\n\n저장 폴더의 노트 파일도 함께 삭제됩니다.`)) return;
+          try {
+            await api(`/api/history/${encodeURIComponent(m.id)}`, { method: 'DELETE' });
+            toast('삭제했습니다');
+            loadHistoryList($('#historySearch').value.trim());
+          } catch (err) {
+            toast(err.message.slice(0, 140));
+          }
+        });
+        side.append(obs, del);
+        li.append(open, side);
+        return li;
+      }),
+    );
+    empty.hidden = entries.length > 0;
+    empty.textContent = q ? '검색 결과가 없습니다.' : '아직 저장된 기록이 없습니다. 질문하면 자동으로 저장됩니다.';
+    $('#historyClear').disabled = !entries.length && !q;
+  } catch (err) {
+    if (my !== historyReq) return;
+    list.replaceChildren();
+    empty.hidden = false;
+    empty.textContent = `기록을 불러오지 못했습니다: ${err.message}`;
+  }
+}
+
+function setupHistory() {
+  const dlg = $('#historyDlg');
+  const search = $('#historySearch');
+  let timer;
+  $('#historyBtn').addEventListener('click', () => {
+    search.value = '';
+    dlg.showModal();
+    loadHistoryList();
+  });
+  $('#historyClose').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) dlg.close();
+  });
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => loadHistoryList(search.value.trim()), 250);
+  });
+  $('#historyClear').addEventListener('click', async () => {
+    if (!confirm('저장된 기록을 모두 삭제할까요?\n\n저장 폴더에서 이 앱이 만든 노트만 삭제되며, 다른 노트는 그대로 남습니다. 되돌릴 수 없습니다.')) return;
+    try {
+      const { deleted } = await post('/api/history/clear', { confirm: true });
+      toast(`${deleted}개 기록을 삭제했습니다`);
+      loadHistoryList();
+    } catch (err) {
+      toast(err.message.slice(0, 140));
+    }
+  });
+}
+
+/* ---- 설정: 기록 저장 위치 ---- */
+async function loadHistoryConfig() {
+  try {
+    const c = await api('/api/history/config');
+    $('#historyDir').value = c.dir;
+    $('#historyEnabled').checked = c.enabled;
+    $('#historyCount').textContent = `노트 ${c.count}개`;
+    $('#historyStatus').textContent = c.enabled ? '' : '저장이 꺼져 있습니다. 새 질문은 기록되지 않습니다.';
+  } catch (err) {
+    $('#historyStatus').textContent = `설정을 불러오지 못했습니다: ${err.message}`;
+  }
+}
+
+async function applyHistoryDir(dir) {
+  try {
+    await post('/api/history/config', { dir });
+    toast('저장 폴더를 적용했습니다');
+  } catch (err) {
+    toast(err.message.slice(0, 140));
+  }
+  await loadHistoryConfig();
+}
+
+function setupHistorySettings() {
+  const pick = $('#pickFolderBtn');
+  if (window.desktop?.pickFolder) pick.hidden = false; // 폴더 선택 창은 데스크탑 앱에서만 쓸 수 있다
+  pick.addEventListener('click', async () => {
+    const r = await window.desktop.pickFolder();
+    if (r?.path) {
+      $('#historyDir').value = r.path;
+      applyHistoryDir(r.path);
+    }
+  });
+  $('#applyDirBtn').addEventListener('click', () => applyHistoryDir($('#historyDir').value));
+  $('#historyDir').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // 설정 창이 저장/닫힘으로 처리되지 않게
+      applyHistoryDir($('#historyDir').value);
+    }
+  });
+  $('#historyEnabled').addEventListener('change', async (e) => {
+    try {
+      await post('/api/history/config', { enabled: e.target.checked });
+      toast(e.target.checked ? '기록 저장을 켰습니다' : '기록 저장을 껐습니다');
+    } catch (err) {
+      toast(err.message.slice(0, 140));
+    }
+    loadHistoryConfig();
+  });
 }
 
 /** 카드 헤더에 실제로 응답한 모델명을 표시한다 (별칭/기본값이 아니라 CLI·API 가 알려준 값) */
@@ -542,12 +891,20 @@ function renderChips() {
 }
 
 /** 조합(세 번째 AI) 적용. 합의 조정 AI 가 조합에서 빠지면 Claude 로 되돌린다 */
+function refreshSynthOptions() {
+  const sel = $('#synthSelect');
+  const current = sel.value || settings.synth;
+  sel.replaceChildren(...comboAgents().map((a) => new Option(`${a.name} (${a.vendor})`, a.id)));
+  sel.value = comboAgents().some((a) => a.id === current) ? current : 'anthropic';
+}
+
 function applyCombo(value) {
   settings.combo = value === 'antigravity' ? 'antigravity' : 'gemini';
   if (!comboAgents().some((a) => a.id === settings.synth)) settings.synth = 'anthropic';
   saveSettings();
   $('#comboSelect').value = settings.combo;
   renderChips();
+  refreshSynthOptions(); // 설정창이 열려 있으면 합의 조정 AI 후보도 조합에 맞춘다
 }
 
 function setupCombo() {
@@ -683,8 +1040,7 @@ function renderSettings() {
     wrap.append(sec);
   }
   const sel = $('#synthSelect');
-  sel.replaceChildren(...comboAgents().map((a) => new Option(`${a.name} (${a.vendor})`, a.id)));
-  sel.value = comboAgents().some((a) => a.id === settings.synth) ? settings.synth : 'anthropic';
+  refreshSynthOptions();
 }
 
 const cliModelCache = {};
@@ -805,6 +1161,8 @@ async function init() {
   setupDesktop();
   renderChips();
   setupCombo();
+  setupHistory();
+  setupHistorySettings();
   renderMode();
   renderExamples();
   renderSettings();
@@ -823,6 +1181,7 @@ async function init() {
     const q = ta.value.trim();
     if (q) ask(q);
   });
+  $('#resetBtn').addEventListener('click', resetAll);
   $('#sendBtn').addEventListener('click', (e) => {
     if (run) {
       e.preventDefault(); // 같은 클릭이 폼 제출로 이어져 재실행되는 것을 막는다
@@ -855,6 +1214,7 @@ async function init() {
   const dlg = $('#settings');
   $('#settingsBtn').addEventListener('click', () => {
     renderSettings();
+    loadHistoryConfig();
     dlg.showModal();
   });
   dlg.addEventListener('close', () => {
@@ -872,6 +1232,7 @@ async function init() {
     setRunning(true);
     await runConsensus(ctl);
     finish(ctl);
+    if (currentSession?.round === lastRound) await persistRun(currentSession); // 재시도 결과로 같은 노트를 갱신한다
   });
 }
 
